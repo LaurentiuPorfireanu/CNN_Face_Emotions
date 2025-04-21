@@ -6,6 +6,8 @@ from PIL import Image
 import cv2
 import numpy as np
 import time
+IMAGE_SIZE = 96
+
 
 
 # Define the model architecture (identical to the one in your trainmodel.ipynb)
@@ -27,7 +29,7 @@ class EmotionCNN(nn.Module):
         self.dropout3 = nn.Dropout(0.2)
 
         # Calculate the size after convolutions
-        self.flat_features = 512 * 6 * 6
+        self.flat_features = 512 * 12 * 12
 
         # Fully connected layers
         self.fc1 = nn.Linear(self.flat_features, 512)
@@ -68,7 +70,7 @@ EMOTIONS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
 # Same image preprocessing as in training
 transform = transforms.Compose([
-    transforms.Resize((48, 48)),
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5], std=[0.5])
 ])
@@ -83,7 +85,7 @@ def realtime_emotion_detection():
     # Load the model
     model = EmotionCNN().to(device)
     try:
-        model.load_state_dict(torch.load('emotion_model.pth', map_location=device))
+        model.load_state_dict(torch.load('PyTorch/emotion_model.pth', map_location=device))
         print("Model loaded successfully!")
     except Exception as e:
         print(f"Error loading model: {e}")
@@ -137,7 +139,7 @@ def realtime_emotion_detection():
             face_region = gray[y:y + h, x:x + w]
 
             # Resize to model's input size
-            face_resized = cv2.resize(face_region, (48, 48))
+            face_resized = cv2.resize(face_region, (IMAGE_SIZE, IMAGE_SIZE))
 
             # Convert to PIL Image
             face_pil = Image.fromarray(face_resized)
