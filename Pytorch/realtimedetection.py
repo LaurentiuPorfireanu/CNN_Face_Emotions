@@ -6,8 +6,8 @@ from PIL import Image
 import cv2
 import numpy as np
 import time
-IMAGE_SIZE = 96
 
+IMAGE_SIZE = 96
 
 
 # Define the model architecture (identical to the one in your trainmodel.ipynb)
@@ -85,7 +85,7 @@ def realtime_emotion_detection():
     # Load the model
     model = EmotionCNN().to(device)
     try:
-        model.load_state_dict(torch.load('PyTorch/emotion_model.pth', map_location=device))
+        model.load_state_dict(torch.load('emotion_model.pth', map_location=device))
         print("Model loaded successfully!")
     except Exception as e:
         print(f"Error loading model: {e}")
@@ -112,6 +112,12 @@ def realtime_emotion_detection():
     # For frame rate calculation
     prev_time = 0
 
+    # Variables for frame counting and storing emotion results
+    frame_count = 0
+    current_emotion = "unknown"
+    current_confidence = 0.0
+    face_locations = []
+
     while True:
         # Read frame from webcam
         ret, frame = cap.read()
@@ -127,49 +133,68 @@ def realtime_emotion_detection():
         # Convert to grayscale for face detection
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Detect faces
-        faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+        # Update the frame counter
+        frame_count = (frame_count + 1) % 15
+
+        # Only perform emotion detection every 15 frames (when frame_count is 0)
+        if frame_count == 0:
+            # Detect faces
+            faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+
+            # Store face locations
+            face_locations = faces
+
+            # Process the first face found (if any)
+            if len(faces) > 0:
+                (x, y, w, h) = faces[0]  # Process only the first face
+
+                # Extract face region
+                face_region = gray[y:y + h, x:x + w]
+
+                # Resize to model's input size
+                face_resized = cv2.resize(face_region, (IMAGE_SIZE, IMAGE_SIZE))
+
+                # Convert to PIL Image
+                face_pil = Image.fromarray(face_resized)
+
+                # Apply transformations
+                face_tensor = transform(face_pil).unsqueeze(0).to(device)
+
+                # Get prediction
+                with torch.no_grad():
+                    outputs = model(face_tensor)
+                    probabilities = F.softmax(outputs, dim=1)
+                    confidence, prediction = torch.max(probabilities, 1)
+
+                # Update emotion label and confidence
+                current_emotion = EMOTIONS[prediction.item()]
+                current_confidence = confidence.item()
 
         # Draw FPS on the frame
         cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                     0.7, (0, 0, 255), 2)
 
-        for (x, y, w, h) in faces:
-            # Extract face region
-            face_region = gray[y:y + h, x:x + w]
+        # Add frame counter to display
+        cv2.putText(frame, f"Frame: {frame_count}/15", (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7, (0, 0, 255), 2)
 
-            # Resize to model's input size
-            face_resized = cv2.resize(face_region, (IMAGE_SIZE, IMAGE_SIZE))
-
-            # Convert to PIL Image
-            face_pil = Image.fromarray(face_resized)
-
-            # Apply transformations
-            face_tensor = transform(face_pil).unsqueeze(0).to(device)
-
-            # Get prediction
-            with torch.no_grad():
-                outputs = model(face_tensor)
-                probabilities = F.softmax(outputs, dim=1)
-                confidence, prediction = torch.max(probabilities, 1)
-
-            # Get emotion label and confidence
-            emotion = EMOTIONS[prediction.item()]
-            conf_value = confidence.item()
-
-            # Draw rectangle and emotion label on the frame
+        # Draw rectangles and emotion labels for all detected faces
+        for (x, y, w, h) in face_locations:
+            # Draw rectangle on the frame
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            emotion_text = f"{emotion}: {conf_value:.2f}"
+
+            # Display the emotion text
+            emotion_text = f"{current_emotion}: {current_confidence:.2f}"
 
             # Determine text color based on emotion
             color = (255, 255, 255)  # Default: white
-            if emotion == "happy":
+            if current_emotion == "happy":
                 color = (0, 255, 255)  # Yellow
-            elif emotion == "angry":
+            elif current_emotion == "angry":
                 color = (0, 0, 255)  # Red
-            elif emotion == "sad":
+            elif current_emotion == "sad":
                 color = (255, 0, 0)  # Blue
-            elif emotion == "surprise":
+            elif current_emotion == "surprise":
                 color = (0, 255, 0)  # Green
 
             # Display emotion and confidence
