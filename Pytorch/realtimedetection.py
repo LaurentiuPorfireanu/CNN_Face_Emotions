@@ -10,207 +10,235 @@ import time
 IMAGE_SIZE = 96
 
 
-# Define the model architecture (identical to the one in your trainmodel.ipynb)
 class EmotionCNN(nn.Module):
-    def __init__(self, num_classes=7):
-        super(EmotionCNN, self).__init__()
+	"""
+	A Convolutional Neural Network (CNN) for emotion classification from grayscale facial images.
 
-        # Convolutional layers
-        self.conv1 = nn.Conv2d(1, 128, kernel_size=3, padding=1)
-        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.dropout1 = nn.Dropout(0.2)
+	Architecture Overview:
+	- 3 convolutional blocks (Conv2D + ReLU + MaxPooling + Dropout)
+	- Fully connected layers for feature integration and final classification.
 
-        self.conv2 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.dropout2 = nn.Dropout(0.2)
+	Args:
+		num_classes (int): Number of emotion categories to classify. Default is 7.
+	"""
 
-        self.conv3 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
-        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.dropout3 = nn.Dropout(0.2)
+	def __init__(self, num_classes: int = 7) -> None:
+		super(EmotionCNN, self).__init__()
 
-        # Calculate the size after convolutions
-        self.flat_features = 512 * 12 * 12
+		# First convolutional block
+		self.conv1: nn.Conv2d = nn.Conv2d(in_channels=1, out_channels=128, kernel_size=3, padding=1)
+		self.pool1: nn.MaxPool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+		self.dropout1: nn.Dropout = nn.Dropout(0.2)
 
-        # Fully connected layers
-        self.fc1 = nn.Linear(self.flat_features, 512)
-        self.dropout4 = nn.Dropout(0.2)
-        self.fc2 = nn.Linear(512, 256)
-        self.dropout5 = nn.Dropout(0.2)
-        self.fc3 = nn.Linear(256, num_classes)
+		# Second convolutional block
+		self.conv2: nn.Conv2d = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1)
+		self.pool2: nn.MaxPool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+		self.dropout2: nn.Dropout = nn.Dropout(0.2)
 
-    def forward(self, x):
-        # Convolutional layers
-        x = F.relu(self.conv1(x))
-        x = self.pool1(x)
-        x = self.dropout1(x)
+		# Third convolutional block
+		self.conv3: nn.Conv2d = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=3, padding=1)
+		self.pool3: nn.MaxPool2d = nn.MaxPool2d(kernel_size=2, stride=2)
+		self.dropout3: nn.Dropout = nn.Dropout(0.2)
 
-        x = F.relu(self.conv2(x))
-        x = self.pool2(x)
-        x = self.dropout2(x)
+		# Compute the number of flattened features dynamically
+		self.flat_features: int = 512 * (IMAGE_SIZE // 8) * (IMAGE_SIZE // 8)
+		# Explanation: After 3 times pooling with stride 2, size = original_size / (2^3) = original_size / 8
 
-        x = F.relu(self.conv3(x))
-        x = self.pool3(x)
-        x = self.dropout3(x)
+		# Fully connected layers
+		self.fc1: nn.Linear = nn.Linear(self.flat_features, 512)
+		self.dropout4: nn.Dropout = nn.Dropout(0.2)
+		self.fc2: nn.Linear = nn.Linear(512, 256)
+		self.dropout5: nn.Dropout = nn.Dropout(0.2)
+		self.fc3: nn.Linear = nn.Linear(256, num_classes)
 
-        # Flatten
-        x = x.view(-1, self.flat_features)
+	def forward(self, x: torch.Tensor) -> torch.Tensor:
+		"""
+		Defines the forward pass of the network.
 
-        # Fully connected layers
-        x = F.relu(self.fc1(x))
-        x = self.dropout4(x)
-        x = F.relu(self.fc2(x))
-        x = self.dropout5(x)
-        x = self.fc3(x)
+		Args:
+			x (torch.Tensor): Input tensor of shape (batch_size, 1, 96, 96).
 
-        return x
+		Returns:
+			torch.Tensor: Output logits tensor of shape (batch_size, num_classes).
+		"""
+		# Apply first convolutional block
+		x = F.relu(self.conv1(x))
+		x = self.pool1(x)
+		x = self.dropout1(x)
 
+		# Apply second convolutional block
+		x = F.relu(self.conv2(x))
+		x = self.pool2(x)
+		x = self.dropout2(x)
 
-# Labels - must match the ones used in training
+		# Apply third convolutional block
+		x = F.relu(self.conv3(x))
+		x = self.pool3(x)
+		x = self.dropout3(x)
+
+		# Flatten the tensor for fully connected layers
+		x = x.view(-1, self.flat_features)
+
+		# Pass through fully connected layers with dropout
+		x = F.relu(self.fc1(x))
+		x = self.dropout4(x)
+		x = F.relu(self.fc2(x))
+		x = self.dropout5(x)
+		x = self.fc3(x)  # Final layer outputs raw logits
+
+		return x
+     
+
 EMOTIONS = ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 
-# Same image preprocessing as in training
-transform = transforms.Compose([
-    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.5], std=[0.5])
+transform: transforms.Compose = transforms.Compose([
+	transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),  # Resize images to (96, 96)
+	transforms.ToTensor(),                         # Convert images to PyTorch tensors
+	transforms.Normalize(mean=[0.5], std=[0.5])    # Normalize tensors to range [-1, 1]
 ])
 
 
-# Main function for real-time emotion detection
-def realtime_emotion_detection():
-    # Set device (CPU or GPU)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+def realtime_emotion_detection() -> None:
+	"""
+	Runs real-time emotion detection using a webcam feed.
 
-    # Load the model
-    model = EmotionCNN().to(device)
-    try:
-        model.load_state_dict(torch.load('emotion_model.pth', map_location=device))
-        print("Model loaded successfully!")
-    except Exception as e:
-        print(f"Error loading model: {e}")
-        return
+	Steps:
+	- Load the pre-trained EmotionCNN model.
+	- Detect faces in real-time using OpenCV Haar Cascades.
+	- Predict emotions for detected faces every 15 frames.
+	- Display the predicted emotion, confidence score, and FPS on the video feed.
 
-    model.eval()  # Set model to evaluation mode
+	Returns:
+		None
+	"""
+	
+	device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+	print(f"Using device: {device}")
 
-    # Load face detector
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-    if face_cascade.empty():
-        print("Error: Could not load face detector cascade")
-        return
+	
+	model: EmotionCNN = EmotionCNN().to(device)
+	try:
+		model.load_state_dict(torch.load('emotion_model.pth', map_location=device))
+		print("Model loaded successfully!")
+	except Exception as e:
+		print(f"Error loading model: {e}")
+		return
 
-    # Initialize webcam
-    cap = cv2.VideoCapture(0)
+	model.eval()  
 
-    # Check if webcam opened successfully
-    if not cap.isOpened():
-        print("Error: Could not open webcam")
-        return
+	# Load Haar Cascade face detector
+	face_cascade: cv2.CascadeClassifier = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+	if face_cascade.empty():
+		print("Error: Could not load face detector cascade")
+		return
 
-    print("Press 'q' to quit")
+	# Initialize webcam
+	cap: cv2.VideoCapture = cv2.VideoCapture(0)
+	if not cap.isOpened():
+		print("Error: Could not open webcam")
+		return
 
-    # For frame rate calculation
-    prev_time = 0
+	print("Press 'q' to quit")
 
-    # Variables for frame counting and storing emotion results
-    frame_count = 0
-    current_emotion = "unknown"
-    current_confidence = 0.0
-    face_locations = []
+	# Initialize variables for FPS calculation
+	prev_time: float = 0.0
 
-    while True:
-        # Read frame from webcam
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Failed to capture image")
-            break
+	# Variables for frame counting and emotion detection
+	frame_count: int = 0
+	current_emotion: str = "unknown"
+	current_confidence: float = 0.0
+	face_locations: list = []
 
-        # Calculate FPS
-        current_time = time.time()
-        fps = 1 / (current_time - prev_time) if prev_time > 0 else 30
-        prev_time = current_time
+	while True:
+		ret, frame = cap.read()
+		if not ret:
+			print("Error: Failed to capture image")
+			break
 
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+		# Calculate FPS
+		current_time: float = time.time()
+		fps: float = 1 / (current_time - prev_time) if prev_time > 0 else 30
+		prev_time = current_time
 
-        # Update the frame counter
-        frame_count = (frame_count + 1) % 15
+		gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # Only perform emotion detection every 15 frames (when frame_count is 0)
-        if frame_count == 0:
-            # Detect faces
-            faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30, 30))
+		# Update frame counter
+		frame_count = (frame_count + 1) % 15
 
-            # Store face locations
-            face_locations = faces
+		# Perform face detection and emotion prediction every 15 frames
+		if frame_count == 0:
+			faces = face_cascade.detectMultiScale(
+				gray,
+				scaleFactor=1.1,
+				minNeighbors=5,
+				minSize=(30, 30)
+			)
+			face_locations = faces
 
-            # Process the first face found (if any)
-            if len(faces) > 0:
-                (x, y, w, h) = faces[0]  # Process only the first face
+			# Process only the first detected face
+			if len(faces) > 0:
+				(x, y, w, h) = faces[0]
 
-                # Extract face region
-                face_region = gray[y:y + h, x:x + w]
+				# Extract the face region
+				face_region = gray[y:y + h, x:x + w]
 
-                # Resize to model's input size
-                face_resized = cv2.resize(face_region, (IMAGE_SIZE, IMAGE_SIZE))
+				# Resize face to model input size
+				face_resized = cv2.resize(face_region, (IMAGE_SIZE, IMAGE_SIZE))
 
-                # Convert to PIL Image
-                face_pil = Image.fromarray(face_resized)
+				# Convert to PIL image
+				face_pil = Image.fromarray(face_resized)
 
-                # Apply transformations
-                face_tensor = transform(face_pil).unsqueeze(0).to(device)
+				face_tensor = transform(face_pil).unsqueeze(0).to(device)
 
-                # Get prediction
-                with torch.no_grad():
-                    outputs = model(face_tensor)
-                    probabilities = F.softmax(outputs, dim=1)
-                    confidence, prediction = torch.max(probabilities, 1)
+				with torch.no_grad():
+					outputs = model(face_tensor)
+					probabilities = F.softmax(outputs, dim=1)
+					confidence, prediction = torch.max(probabilities, 1)
 
-                # Update emotion label and confidence
-                current_emotion = EMOTIONS[prediction.item()]
-                current_confidence = confidence.item()
+				# Update current emotion and confidence
+				current_emotion = EMOTIONS[prediction.item()]
+				current_confidence = confidence.item()
 
-        # Draw FPS on the frame
-        cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (0, 0, 255), 2)
 
-        # Add frame counter to display
-        cv2.putText(frame, f"Frame: {frame_count}/15", (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7, (0, 0, 255), 2)
+		cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+					0.7, (0, 0, 255), 2)
 
-        # Draw rectangles and emotion labels for all detected faces
-        for (x, y, w, h) in face_locations:
-            # Draw rectangle on the frame
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # Display the emotion text
-            emotion_text = f"{current_emotion}: {current_confidence:.2f}"
+		cv2.putText(frame, f"Frame: {frame_count}/15", (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
+					0.7, (0, 0, 255), 2)
 
-            # Determine text color based on emotion
-            color = (255, 255, 255)  # Default: white
-            if current_emotion == "happy":
-                color = (0, 255, 255)  # Yellow
-            elif current_emotion == "angry":
-                color = (0, 0, 255)  # Red
-            elif current_emotion == "sad":
-                color = (255, 0, 0)  # Blue
-            elif current_emotion == "surprise":
-                color = (0, 255, 0)  # Green
 
-            # Display emotion and confidence
-            cv2.putText(frame, emotion_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.9, color, 2)
+		for (x, y, w, h) in face_locations:
+			cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-        # Display the resulting frame
-        cv2.imshow('Real-time Emotion Detection', frame)
+			emotion_text: str = f"{current_emotion}: {current_confidence:.2f}"
 
-        # Press 'q' to exit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+			# Set text color based on detected emotion
+			color: tuple = (255, 255, 255) 
+			if current_emotion == "happy":
+				color = (0, 255, 255)
+			elif current_emotion == "angry":
+				color = (0, 0, 255) 
+			elif current_emotion == "sad":
+				color = (255, 0, 0) 
+			elif current_emotion == "surprise":
+				color = (0, 255, 0) 
 
-    # Release resources
-    cap.release()
-    cv2.destroyAllWindows()
+			# Draw emotion text above face rectangle
+			cv2.putText(frame, emotion_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
+						0.9, color, 2)
+
+		# Display the resulting frame
+		cv2.imshow('Real-time Emotion Detection', frame)
+
+	
+		if cv2.waitKey(1) & 0xFF == ord('q'):
+			break
+
+	# Release resources
+	cap.release()
+	cv2.destroyAllWindows()
+	
 
 
 if __name__ == "__main__":
