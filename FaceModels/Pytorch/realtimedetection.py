@@ -8,7 +8,8 @@ import numpy as np
 import time
 
 IMAGE_SIZE = 96
-
+COARSE_EMOTIONS = ['happy', 'fear', 'angry', 'other']
+FINE_EMOTIONS   = ['neutral', 'disgust', 'sad', 'surprise']
 
 class EmotionCNN(nn.Module):
 	"""
@@ -98,148 +99,94 @@ transform: transforms.Compose = transforms.Compose([
 ])
 
 
-def realtime_emotion_detection() -> None:
-	"""
-	Runs real-time emotion detection using a webcam feed.
+def realtime_emotion_detection(threshold: float = 0.6) -> None:
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
 
-	Steps:
-	- Load the pre-trained EmotionCNN model.
-	- Detect faces in real-time using OpenCV Haar Cascades.
-	- Predict emotions for detected faces every 15 frames.
-	- Display the predicted emotion, confidence score, and FPS on the video feed.
+    
+    model_coarse = EmotionCNN(num_classes=len(COARSE_EMOTIONS)).to(device)
+    model_fine   = EmotionCNN(num_classes=len(FINE_EMOTIONS)).to(device)
+    model_coarse.load_state_dict(torch.load('coarse_model.pth', map_location=device))
+    model_fine  .load_state_dict(torch.load('fine_model.pth',   map_location=device))
+    model_coarse.eval()
+    model_fine.eval()
+    print("Both models loaded!")
 
-	Returns:
-		None
-	"""
-	
-	device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-	print(f"Using device: {device}")
+    
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    )
+    cap = cv2.VideoCapture(0)
+    prev_time = 0
+    frame_count = 0
+    current_emotion = "unknown"
+    current_confidence = 0.0
+    face_locations = []
 
-	
-	model: EmotionCNN = EmotionCNN().to(device)
-	try:
-		model.load_state_dict(torch.load('emotion_model.pth', map_location=device))
-		print("Model loaded successfully!")
-	except Exception as e:
-		print(f"Error loading model: {e}")
-		return
+    print("Press 'q' to quit")
 
-	model.eval()  
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
 
-	# Load Haar Cascade face detector
-	face_cascade: cv2.CascadeClassifier = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-	if face_cascade.empty():
-		print("Error: Could not load face detector cascade")
-		return
+        
+        curr_t = time.time()
+        fps = 1/(curr_t - prev_time) if prev_time else 30
+        prev_time = curr_t
 
-	# Initialize webcam
-	cap: cv2.VideoCapture = cv2.VideoCapture(0)
-	if not cap.isOpened():
-		print("Error: Could not open webcam")
-		return
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame_count = (frame_count + 1) % 15
 
-	print("Press 'q' to quit")
+        if frame_count == 0:
+            faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30,30))
+            face_locations = faces[:1]  
 
-	# Initialize variables for FPS calculation
-	prev_time: float = 0.0
+            if len(face_locations):
+                x, y, w, h = face_locations[0]
+                face = gray[y:y+h, x:x+w]
+                face = cv2.resize(face, (IMAGE_SIZE, IMAGE_SIZE))
+                face = Image.fromarray(face)
+                tensor = transform(face).unsqueeze(0).to(device)
 
-	# Variables for frame counting and emotion detection
-	frame_count: int = 0
-	current_emotion: str = "unknown"
-	current_confidence: float = 0.0
-	face_locations: list = []
+                with torch.no_grad():
+                   
+                    out_c   = model_coarse(tensor)
+                    probs_c = F.softmax(out_c, dim=1)[0]
+                    p_other = probs_c[COARSE_EMOTIONS.index('other')]
 
-	while True:
-		ret, frame = cap.read()
-		if not ret:
-			print("Error: Failed to capture image")
-			break
+                    if p_other > threshold:
+                        
+                        out_f   = model_fine(tensor)
+                        probs_f = F.softmax(out_f, dim=1)[0]
+                        idx_f   = torch.argmax(out_f, dim=1).item()
+                        current_emotion    = FINE_EMOTIONS[idx_f]
+                        current_confidence = probs_f[idx_f].item()
+                    else:
+                     
+                        top3 = probs_c[:3]
+                        idx_c = torch.argmax(top3).item()
+                        current_emotion    = COARSE_EMOTIONS[idx_c]
+                        current_confidence = top3[idx_c].item()
 
-		# Calculate FPS
-		current_time: float = time.time()
-		fps: float = 1 / (current_time - prev_time) if prev_time > 0 else 30
-		prev_time = current_time
+        
+        cv2.putText(frame, f"FPS: {int(fps)}", (10,30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+        cv2.putText(frame, f"Frame: {frame_count}/15", (10,60),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
 
-		gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        for (x, y, w, h) in face_locations:
+            cv2.rectangle(frame, (x,y), (x+w,y+h), (0,255,0), 2)
+            text = f"{current_emotion}: {current_confidence:.2f}"
+            cv2.putText(frame, text, (x, y-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255,255,255), 2)
 
-		# Update frame counter
-		frame_count = (frame_count + 1) % 15
+        cv2.imshow('Real-time Emotion Detection', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-		# Perform face detection and emotion prediction every 15 frames
-		if frame_count == 0:
-			faces = face_cascade.detectMultiScale(
-				gray,
-				scaleFactor=1.1,
-				minNeighbors=5,
-				minSize=(30, 30)
-			)
-			face_locations = faces
-
-			# Process only the first detected face
-			if len(faces) > 0:
-				(x, y, w, h) = faces[0]
-
-				# Extract the face region
-				face_region = gray[y:y + h, x:x + w]
-
-				# Resize face to model input size
-				face_resized = cv2.resize(face_region, (IMAGE_SIZE, IMAGE_SIZE))
-
-				# Convert to PIL image
-				face_pil = Image.fromarray(face_resized)
-
-				face_tensor = transform(face_pil).unsqueeze(0).to(device)
-
-				with torch.no_grad():
-					outputs = model(face_tensor)
-					probabilities = F.softmax(outputs, dim=1)
-					confidence, prediction = torch.max(probabilities, 1)
-
-				# Update current emotion and confidence
-				current_emotion = EMOTIONS[prediction.item()]
-				current_confidence = confidence.item()
-
-
-		cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-					0.7, (0, 0, 255), 2)
-
-
-		cv2.putText(frame, f"Frame: {frame_count}/15", (10, 60), cv2.FONT_HERSHEY_SIMPLEX,
-					0.7, (0, 0, 255), 2)
-
-
-		for (x, y, w, h) in face_locations:
-			cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
-			emotion_text: str = f"{current_emotion}: {current_confidence:.2f}"
-
-			# Set text color based on detected emotion
-			color: tuple = (255, 255, 255) 
-			if current_emotion == "happy":
-				color = (0, 255, 255)
-			elif current_emotion == "angry":
-				color = (0, 0, 255) 
-			elif current_emotion == "sad":
-				color = (255, 0, 0) 
-			elif current_emotion == "surprise":
-				color = (0, 255, 0) 
-
-			# Draw emotion text above face rectangle
-			cv2.putText(frame, emotion_text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-						0.9, color, 2)
-
-		# Display the resulting frame
-		cv2.imshow('Real-time Emotion Detection', frame)
-
-	
-		if cv2.waitKey(1) & 0xFF == ord('q'):
-			break
-
-	# Release resources
-	cap.release()
-	cv2.destroyAllWindows()
-	
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
-    realtime_emotion_detection()
+    realtime_emotion_detection(threshold=0.3)
