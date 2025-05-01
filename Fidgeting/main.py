@@ -1,245 +1,386 @@
-# import cv2
-# import mediapipe as mp
-# import time
-# import math as math
-
-
-# class HandTrackingDynamic:
-#     def __init__(self, mode=False, maxHands=2, detectionCon=0.5, trackCon=0.5):
-#         self.__mode__   =  mode
-#         self.__maxHands__   =  maxHands
-#         self.__detectionCon__   =   detectionCon
-#         self.__trackCon__   =   trackCon
-#         self.handsMp = mp.solutions.hands
-#         self.hands = self.handsMp.Hands()
-#         self.mpDraw= mp.solutions.drawing_utils
-#         self.tipIds = [4, 8, 12, 16, 20]
-
-#     def findFingers(self, frame, draw=True):
-#         imgRGB = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-#         self.results = self.hands.process(imgRGB)  
-#         if self.results.multi_hand_landmarks: 
-#             for handLms in self.results.multi_hand_landmarks:
-#                 if draw:
-#                     self.mpDraw.draw_landmarks(frame, handLms,self.handsMp.HAND_CONNECTIONS)
-
-#         return frame
-
-#     def findPosition( self, frame, handNo=0, draw=True):
-#         xList =[]
-#         yList =[]
-#         bbox = []
-#         self.lmsList=[]
-#         if self.results.multi_hand_landmarks:
-#             myHand = self.results.multi_hand_landmarks[handNo]
-#             for id, lm in enumerate(myHand.landmark):
-            
-#                 h, w, c = frame.shape
-#                 cx, cy = int(lm.x * w), int(lm.y * h)
-#                 xList.append(cx)
-#                 yList.append(cy)
-#                 self.lmsList.append([id, cx, cy])
-#                 if draw:
-#                     cv2.circle(frame,  (cx, cy), 5, (255, 0, 255), cv2.FILLED)
-
-#             xmin, xmax = min(xList), max(xList)
-#             ymin, ymax = min(yList), max(yList)
-#             bbox = xmin, ymin, xmax, ymax
-#             print( "Hands Keypoint")
-#             print(bbox)
-#             if draw:
-#                 cv2.rectangle(frame, (xmin - 20, ymin - 20),(xmax + 20, ymax + 20),
-#                                (0, 255 , 0) , 2)
-
-#         return self.lmsList, bbox
-    
-#     def findFingerUp(self):
-#          fingers=[]
-
-#          if self.lmsList[self.tipIds[0]][1] > self.lmsList[self.tipIds[0]-1][1]:
-#               fingers.append(1)
-#          else:
-#               fingers.append(0)
-
-#          for id in range(1, 5):            
-#               if self.lmsList[self.tipIds[id]][2] < self.lmsList[self.tipIds[id]-2][2]:
-#                    fingers.append(1)
-#               else:
-#                    fingers.append(0)
-        
-#          return fingers
-
-#     def findDistance(self, p1, p2, frame, draw= True, r=15, t=3):
-         
-#         x1 , y1 = self.lmsList[p1][1:]
-#         x2, y2 = self.lmsList[p2][1:]
-#         cx , cy = (x1+x2)//2 , (y1 + y2)//2
-
-#         if draw:
-#               cv2.line(frame,(x1, y1),(x2,y2) ,(255,0,255), t)
-#               cv2.circle(frame,(x1,y1),r,(255,0,255),cv2.FILLED)
-#               cv2.circle(frame,(x2,y2),r, (255,0,0),cv2.FILLED)
-#               cv2.circle(frame,(cx,cy), r,(0,0.255),cv2.FILLED)
-#         len= math.hypot(x2-x1,y2-y1)
-
-#         return len, frame , [x1, y1, x2, y2, cx, cy]
-
-# def main():
-        
-#         ctime=0
-#         ptime=0
-#         cap = cv2.VideoCapture(0)
-#         detector = HandTrackingDynamic()
-#         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-#         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-#         if not cap.isOpened():
-#             print("Cannot open camera")
-#             exit()
-
-#         while True:
-#             ret, frame = cap.read()
-
-#             frame = detector.findFingers(frame)
-#             lmsList = detector.findPosition(frame)
-#             # if len(lmsList)!=0:
-#             #     #print(lmsList[0])
-
-#             ctime = time.time()
-#             fps =1/(ctime-ptime)
-#             ptime = ctime
-
-#             cv2.putText(frame, str(int(fps)), (10,70), cv2.FONT_HERSHEY_PLAIN,3,(255,0,255),3)
- 
-#     #gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-#             cv2.imshow('frame', frame)
-#             cv2.waitKey(1)
-
-
-                
-# if __name__ == "__main__":
-#             main()
-
 import cv2
 import numpy as np
 import mediapipe as mp
-from one_euro_filter import OneEuroFilter
 from collections import deque
+from enum import Enum
 
+
+# Define hand states
+class HandState(Enum):
+    NORMAL = 0
+    FIDGETING = 1
+    PINCHING = 2
+    TAPPING = 3  # New state for finger tapping
+
+
+# Initialize MediaPipe hands
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 mp_styles = mp.solutions.drawing_styles
 
-hands = mp_hands.Hands(static_image_mode=False, min_detection_confidence=0.7, min_tracking_confidence=0.7)
-cap = cv2.VideoCapture(0)
 
-freq = 30.0
-min_cutoff = 2.5
-beta = 0.4
-d_cutoff = 1.0
+# Simple exponential filter for smoothing
+class ExpFilter:
+    def __init__(self, alpha=0.3):
+        self.alpha = alpha
+        self.value = None
 
-filters = {
-    'Left': [
-        [OneEuroFilter(freq, min_cutoff=min_cutoff, beta=beta, d_cutoff=d_cutoff) for _ in range(21)],
-        [OneEuroFilter(freq, min_cutoff=min_cutoff, beta=beta, d_cutoff=d_cutoff) for _ in range(21)]
-    ],
-    'Right': [
-        [OneEuroFilter(freq, min_cutoff=min_cutoff, beta=beta, d_cutoff=d_cutoff) for _ in range(21)],
-        [OneEuroFilter(freq, min_cutoff=min_cutoff, beta=beta, d_cutoff=d_cutoff) for _ in range(21)]
-    ]
-}
+    def __call__(self, x):
+        if self.value is None:
+            self.value = x
+        else:
+            self.value = self.alpha * x + (1 - self.alpha) * self.value
+        return self.value
 
-tip_ids = [
-    mp_hands.HandLandmark.THUMB_TIP,
-    mp_hands.HandLandmark.INDEX_FINGER_TIP,
-    mp_hands.HandLandmark.MIDDLE_FINGER_TIP,
-    mp_hands.HandLandmark.RING_FINGER_TIP,
-    mp_hands.HandLandmark.PINKY_TIP
-]
 
-window_len = 30
-finger_dir_thr = 5
-finger_speed_thr = 2.0
-pinch_dist_thr = 40.0
-pinch_evt_thr = 3
+# Main hand fidget detector class
+class HandFidgetDetector:
+    def __init__(self):
+        # Configuration parameters
+        self.WINDOW_LEN = 20
+        self.FIDGET_THRESHOLD = 5
+        self.PINCH_DISTANCE_THRESHOLD = 30
+        self.COOLDOWN_TIME = 30
+        self.DISPLAY_TIME = 60
 
-pos_deques = {h: {t: deque(maxlen=window_len) for t in tip_ids} for h in ("Left","Right")}
-vel_deques = {h: {t: deque(maxlen=window_len) for t in tip_ids} for h in ("Left","Right")}
-pinch_dist = {h: deque(maxlen=window_len) for h in ("Left","Right")}
-pinch_events = {h: deque(maxlen=window_len) for h in ("Left","Right")}
-last_pinch = {h: False for h in ("Left","Right")}
+        # Initialize MediaPipe
+        self.hands = mp_hands.Hands(
+            static_image_mode=False,
+            max_num_hands=2,
+            min_detection_confidence=0.7,
+            min_tracking_confidence=0.7
+        )
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-    frame = cv2.flip(frame, 1)
-    img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    res = hands.process(img_rgb)
-    img = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-    h, w, _ = img.shape
+        # Initialize trackable landmarks
+        self.tip_ids = [
+            mp_hands.HandLandmark.THUMB_TIP,
+            mp_hands.HandLandmark.INDEX_FINGER_TIP,
+            mp_hands.HandLandmark.MIDDLE_FINGER_TIP,
+            mp_hands.HandLandmark.RING_FINGER_TIP,
+            mp_hands.HandLandmark.PINKY_TIP
+        ]
 
-    if res.multi_hand_landmarks:
-        for lmks, handedness in zip(res.multi_hand_landmarks, res.multi_handedness):
-            label = handedness.classification[0].label
-            for idx, lm in enumerate(lmks.landmark):
-                x_raw, y_raw = lm.x * w, lm.y * h
-                x_f = filters[label][0][idx](x_raw)
-                y_f = filters[label][1][idx](y_raw)
-                lm.x = x_f / w
-                lm.y = y_f / h
+        self.pinch_fingers = [
+            mp_hands.HandLandmark.THUMB_TIP,
+            mp_hands.HandLandmark.INDEX_FINGER_TIP,
+            mp_hands.HandLandmark.MIDDLE_FINGER_TIP
+        ]
 
-            for tip in tip_ids:
-                lm = lmks.landmark[tip]
-                pos = (lm.x * w, lm.y * h)
-                dq = pos_deques[label][tip]
-                if dq:
-                    prev = dq[-1]
-                    vel = (pos[0] - prev[0], pos[1] - prev[1])
-                    vel_deques[label][tip].append(vel)
-                dq.append(pos)
+        # Initialize filters and data structures
+        self.init_filters()
+        self.hands_data = {'Left': self.create_hand_data(), 'Right': self.create_hand_data()}
 
-            lm_i = lmks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            lm_t = lmks.landmark[mp_hands.HandLandmark.THUMB_TIP]
-            d = np.hypot((lm_i.x - lm_t.x) * w, (lm_i.y - lm_t.y) * h)
-            pd = pinch_dist[label]
-            pd.append(d)
-            cur_pinch = d < pinch_dist_thr
-            if cur_pinch and not last_pinch[label]:
-                pinch_events[label].append(1)
-            last_pinch[label] = cur_pinch
+        # For visualization
+        self.frame_counter = 0
 
-            f_f = False
-            for tip in tip_ids:
-                vq = vel_deques[label][tip]
-                if len(vq) == window_len:
-                    dir_changes = sum(1 for i in range(1, window_len) if
-                                      vq[i][0] * vq[i-1][0] + vq[i][1] * vq[i-1][1] < 0)
-                    speeds = [np.hypot(v[0], v[1]) for v in vq]
-                    if dir_changes > finger_dir_thr and np.mean(speeds) > finger_speed_thr:
-                        f_f = True
-                        break
+    def init_filters(self):
+        """Initialize smoothing filters for all landmarks"""
+        self.filters = {
+            'Left': [[ExpFilter() for _ in range(21)], [ExpFilter() for _ in range(21)]],
+            'Right': [[ExpFilter() for _ in range(21)], [ExpFilter() for _ in range(21)]]
+        }
 
-            f_i = sum(pinch_events[label]) > pinch_evt_thr
+    def create_hand_data(self):
+        """Create data structure for tracking a hand"""
+        return {
+            'pos_history': {t: deque(maxlen=self.WINDOW_LEN) for t in self.tip_ids},
+            'vel_history': {t: deque(maxlen=self.WINDOW_LEN) for t in self.tip_ids},
+            'dir_changes': {t: deque(maxlen=self.WINDOW_LEN) for t in self.tip_ids},
+            'pinch_dist': deque(maxlen=self.WINDOW_LEN),
+            'pinch_events': deque(maxlen=self.WINDOW_LEN),
+            'tap_events': deque(maxlen=self.WINDOW_LEN),
+            'last_pinch': False,
+            'cooldown': 0,
+            'display_counter': 0,
+            'state': HandState.NORMAL,
+            'avg_speed': 0
+        }
 
-            if f_f or f_i:
-                cx, cy = int(lm_i.x * w), int(lm_i.y * h)
-                cv2.putText(img, f"{label} FIDGETING", (cx, cy - 20),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    def setup_ui(self):
+        """Create UI controls"""
+        cv2.namedWindow("Controls")
+        cv2.createTrackbar("Speed Thresh", "Controls", 5, 20, lambda x: None)
+        cv2.createTrackbar("Dir Changes", "Controls", 7, 20, lambda x: None)
+        cv2.createTrackbar("Pinch Dist", "Controls", 30, 100, lambda x: None)
 
-            mp_drawing.draw_landmarks(
-                img, lmks, mp_hands.HAND_CONNECTIONS,
-                mp_styles.get_default_hand_landmarks_style(),
-                mp_styles.get_default_hand_connections_style()
+    def update_params(self):
+        """Get parameters from trackbars"""
+        return {
+            'speed_threshold': cv2.getTrackbarPos("Speed Thresh", "Controls"),
+            'dir_threshold': cv2.getTrackbarPos("Dir Changes", "Controls"),
+            'pinch_threshold': cv2.getTrackbarPos("Pinch Dist", "Controls")
+        }
+
+    def process_frame(self, frame):
+        """Process a single video frame"""
+        # Flip frame for mirror effect
+        frame = cv2.flip(frame, 1)
+
+        # Convert to RGB for MediaPipe
+        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, _ = frame.shape
+
+        # Process with MediaPipe
+        results = self.hands.process(img_rgb)
+
+        # Get parameters
+        if hasattr(self, 'params'):
+            params = self.params
+        else:
+            params = {
+                'speed_threshold': 5,
+                'dir_threshold': 7,
+                'pinch_threshold': 30
+            }
+
+        # Process hands if detected
+        if results.multi_hand_landmarks:
+            for landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+                hand_label = handedness.classification[0].label
+                hand_data = self.hands_data[hand_label]
+
+                # Apply smoothing filters
+                self.smooth_landmarks(landmarks, hand_label, w, h)
+
+                # Calculate velocities and direction changes
+                self.calculate_kinematics(landmarks, hand_label, hand_data, w, h)
+
+                # Detect pinching
+                self.detect_pinching(landmarks, hand_data, w, h, params['pinch_threshold'])
+
+                # Detect finger tapping
+                self.detect_tapping(hand_data)
+
+                # Detect fidgeting
+                self.detect_fidgeting(hand_data, params)
+
+                # Draw visualization
+                self.draw_visualization(frame, landmarks, hand_data, hand_label, w, h)
+
+        # Show parameters
+        cv2.putText(
+            frame,
+            f"Speed: {params['speed_threshold']} | Dir Changes: {params['dir_threshold']} | Pinch: {params['pinch_threshold']}",
+            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2
+        )
+
+        return frame
+
+    def smooth_landmarks(self, landmarks, hand_label, w, h):
+        """Apply smoothing to landmark positions"""
+        hand_speed = 0
+        for idx, lm in enumerate(landmarks.landmark):
+            x_raw, y_raw = lm.x * w, lm.y * h
+            x_filtered = self.filters[hand_label][0][idx](x_raw)
+            y_filtered = self.filters[hand_label][1][idx](y_raw)
+
+            # Track filtering amount to estimate speed
+            hand_speed += np.hypot(x_raw - x_filtered, y_raw - y_filtered)
+
+            # Update landmark with filtered position
+            lm.x = x_filtered / w
+            lm.y = y_filtered / h
+
+        # Store average hand speed
+        self.hands_data[hand_label]['avg_speed'] = hand_speed / 21
+
+        # Adapt filter strength based on speed
+        for idx in range(21):
+            # Make filter more responsive when hand is moving fast
+            self.filters[hand_label][0][idx].alpha = min(0.2 + (hand_speed / 1000), 0.8)
+            self.filters[hand_label][1][idx].alpha = min(0.2 + (hand_speed / 1000), 0.8)
+
+    def calculate_kinematics(self, landmarks, hand_label, hand_data, w, h):
+        """Calculate velocities and direction changes for fidget detection"""
+        for tip in self.tip_ids:
+            lm = landmarks.landmark[tip]
+            pos = (lm.x * w, lm.y * h)
+
+            # Calculate velocity
+            if hand_data['pos_history'][tip]:
+                prev_pos = hand_data['pos_history'][tip][-1]
+                vel = (pos[0] - prev_pos[0], pos[1] - prev_pos[1])
+                speed = np.hypot(vel[0], vel[1])
+
+                hand_data['vel_history'][tip].append((vel[0], vel[1], speed))
+
+                # Detect direction changes
+                if len(hand_data['vel_history'][tip]) > 1:
+                    prev_vel = hand_data['vel_history'][tip][-2]
+                    # Dot product < 0 means direction change > 90 degrees
+                    if prev_vel[0] * vel[0] + prev_vel[1] * vel[1] < 0:
+                        hand_data['dir_changes'][tip].append(1)
+                    else:
+                        hand_data['dir_changes'][tip].append(0)
+
+            hand_data['pos_history'][tip].append(pos)
+
+    def detect_pinching(self, landmarks, hand_data, w, h, pinch_threshold):
+        """Detect pinching gestures"""
+        pinch_distances = []
+        for finger in self.pinch_fingers[1:]:
+            thumb = landmarks.landmark[self.pinch_fingers[0]]
+            finger_lm = landmarks.landmark[finger]
+
+            dx = (thumb.x - finger_lm.x) * w
+            dy = (thumb.y - finger_lm.y) * h
+            distance = np.hypot(dx, dy)
+            pinch_distances.append(distance)
+
+        avg_distance = np.mean(pinch_distances)
+        hand_data['pinch_dist'].append(avg_distance)
+
+        # Detect pinch events (transitions from not pinching to pinching)
+        is_pinching = avg_distance < pinch_threshold
+        if is_pinching and not hand_data['last_pinch']:
+            hand_data['pinch_events'].append(1)
+        else:
+            hand_data['pinch_events'].append(0)
+
+        hand_data['last_pinch'] = is_pinching
+
+    def detect_tapping(self, hand_data):
+        """Detect finger tapping on surfaces"""
+        # Look for rapid up-down movements in the y velocity
+        # This is a simplistic implementation - can be improved
+        for tip in self.tip_ids[1:]:  # Skip thumb
+            if len(hand_data['vel_history'][tip]) > 2:
+                vel_y_1 = hand_data['vel_history'][tip][-1][1]
+                vel_y_2 = hand_data['vel_history'][tip][-2][1]
+
+                # Check for significant direction change in vertical movement
+                if vel_y_1 * vel_y_2 < 0 and abs(vel_y_1) > 5 and abs(vel_y_2) > 5:
+                    hand_data['tap_events'].append(1)
+                else:
+                    hand_data['tap_events'].append(0)
+
+    def detect_fidgeting(self, hand_data, params):
+        """Determine if hand is fidgeting based on analyzed data"""
+        # Skip if in cooldown period
+        if hand_data['cooldown'] > 0:
+            hand_data['cooldown'] -= 1
+            return
+
+        # Fidgeting detection based on finger movement
+        movement_fidget = False
+        for tip in self.tip_ids:
+            if len(hand_data['dir_changes'][tip]) == self.WINDOW_LEN:
+                # Count direction changes
+                dir_change_count = sum(hand_data['dir_changes'][tip])
+
+                # Calculate average speed
+                speeds = [v[2] for v in hand_data['vel_history'][tip]]
+                avg_speed = np.mean(speeds) if speeds else 0
+
+                # Fidgeting = rapid direction changes + sufficient speed
+                if dir_change_count > params['dir_threshold'] and avg_speed > params['speed_threshold']:
+                    movement_fidget = True
+                    break
+
+        # Pinch-based fidgeting
+        pinch_count = sum(hand_data['pinch_events'])
+        pinch_fidget = pinch_count > self.FIDGET_THRESHOLD
+
+        # Tap-based fidgeting
+        tap_count = sum(hand_data['tap_events']) if 'tap_events' in hand_data else 0
+        tap_fidget = tap_count > self.FIDGET_THRESHOLD
+
+        # Update hand state
+        if movement_fidget:
+            hand_data['state'] = HandState.FIDGETING
+            hand_data['cooldown'] = self.COOLDOWN_TIME
+            hand_data['display_counter'] = self.DISPLAY_TIME
+        elif pinch_fidget:
+            hand_data['state'] = HandState.PINCHING
+            hand_data['cooldown'] = self.COOLDOWN_TIME // 2
+            hand_data['display_counter'] = self.DISPLAY_TIME
+        elif tap_fidget:
+            hand_data['state'] = HandState.TAPPING
+            hand_data['cooldown'] = self.COOLDOWN_TIME // 2
+            hand_data['display_counter'] = self.DISPLAY_TIME
+        else:
+            hand_data['state'] = HandState.NORMAL
+
+    def draw_visualization(self, frame, landmarks, hand_data, hand_label, w, h):
+        """Draw visualization elements on the frame"""
+        # Draw hand landmarks
+        mp_drawing.draw_landmarks(
+            frame, landmarks, mp_hands.HAND_CONNECTIONS,
+            mp_styles.get_default_hand_landmarks_style(),
+            mp_styles.get_default_hand_connections_style()
+        )
+
+        # Draw fidgeting state
+        if hand_data['display_counter'] > 0:
+            # Get position for text (near index finger)
+            index_tip = landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            text_x, text_y = int(index_tip.x * w), int(index_tip.y * h - 20)
+
+            # Set color based on state
+            if hand_data['state'] == HandState.FIDGETING:
+                color = (0, 255, 0)  # Green
+            elif hand_data['state'] == HandState.PINCHING:
+                color = (0, 165, 255)  # Orange
+            elif hand_data['state'] == HandState.TAPPING:
+                color = (255, 0, 255)  # Magenta
+            else:
+                color = (255, 255, 255)  # White
+
+            # Draw state text
+            cv2.putText(
+                frame, f"{hand_label} {hand_data['state'].name}",
+                (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2
             )
 
-    cv2.imshow("Fidget Detection", img)
-    if cv2.waitKey(1) & 0xFF == 27:
-        break
+            hand_data['display_counter'] -= 1
 
-cap.release()
-cv2.destroyAllWindows()
+            # Optional: Draw velocities for debugging
+            if hand_data['state'] != HandState.NORMAL:
+                for tip in self.tip_ids:
+                    if hand_data['vel_history'][tip]:
+                        vel = hand_data['vel_history'][tip][-1]
+                        pos = hand_data['pos_history'][tip][-1]
+                        end_x = int(pos[0] + vel[0] * 5)
+                        end_y = int(pos[1] + vel[1] * 5)
+                        cv2.line(frame, (int(pos[0]), int(pos[1])), (end_x, end_y), color, 2)
 
 
+# Main function to run the detector
+def run_detector():
+    # Initialize video capture
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Cannot open camera")
+        return
+
+    # Initialize detector
+    detector = HandFidgetDetector()
+    detector.setup_ui()
+
+    while True:
+        # Read frame
+        ret, frame = cap.read()
+        if not ret:
+            print("Can't receive frame (stream end?). Exiting...")
+            break
+
+        # Update parameters
+        detector.params = detector.update_params()
+
+        # Process frame
+        output_frame = detector.process_frame(frame)
+
+        # Display result
+        cv2.imshow("Hand Fidget Detector", output_frame)
+
+        # Exit on ESC
+        if cv2.waitKey(1) == 27:
+            break
+
+    # Clean up
+    cap.release()
+    cv2.destroyAllWindows()
 
 
-
+if __name__ == "__main__":
+    run_detector()
