@@ -113,8 +113,6 @@ class HandFidgetDetector:
 
     def process_frame(self, frame):
         """Process a single video frame"""
-        # Flip frame for mirror effect
-        frame = cv2.flip(frame, 1)
 
         # Convert to RGB for MediaPipe
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
