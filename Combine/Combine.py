@@ -115,7 +115,7 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root    = root
         self.root.title("Live Monitor")
-        self.root.attributes("-fullscreen", True)
+        # self.root.attributes("-fullscreen", True)
         self.root.bind('<KeyPress-q>', lambda e: self.on_close())
         self.running = True
 
