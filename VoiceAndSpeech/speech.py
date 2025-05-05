@@ -132,9 +132,11 @@ class SpeechRecognitionWidget(ttk.Frame):
         control_frame = ttk.Frame(self)
         control_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
 
-        control_frame.grid_columnconfigure(0, weight=1)
-        control_frame.grid_columnconfigure(1, weight=1)
-        control_frame.grid_columnconfigure(2, weight=0)
+        # Updated grid configuration - all controls left-aligned
+        control_frame.grid_columnconfigure(0, weight=0)  # Load button
+        control_frame.grid_columnconfigure(1, weight=0)  # Start button
+        control_frame.grid_columnconfigure(2, weight=0)  # Status light
+        control_frame.grid_columnconfigure(3, weight=1)  # Empty space
 
         self.load_button = ttk.Button(
             control_frame,
@@ -142,7 +144,7 @@ class SpeechRecognitionWidget(ttk.Frame):
             command=self.toggle_model,
             width=12
         )
-        self.load_button.grid(row=0, column=0, padx=2, pady=2, sticky="e")
+        self.load_button.grid(row=0, column=0, padx=(2, 2), pady=2, sticky="w")
 
         self.start_button = ttk.Button(
             control_frame,
@@ -151,10 +153,10 @@ class SpeechRecognitionWidget(ttk.Frame):
             state="disabled",
             width=12
         )
-        self.start_button.grid(row=0, column=1, padx=2, pady=2, sticky="w")
+        self.start_button.grid(row=0, column=1, padx=(2, 2), pady=2, sticky="w")
 
         self.status_light = StatusLight(control_frame, size=15)
-        self.status_light.grid(row=0, column=2, padx=5, pady=2, sticky="e")
+        self.status_light.grid(row=0, column=2, padx=(2, 5), pady=2, sticky="w")
         self.status_light.set_state("off")
 
     def create_transcription_frame(self, parent):

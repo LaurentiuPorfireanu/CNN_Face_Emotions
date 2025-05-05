@@ -14,7 +14,8 @@ import os
 from VoiceAndSpeech.voice import VoiceEmotionDetector
 from VoiceAndSpeech.speech import SpeechRecognitionWidget
 from BodyPosture.posture import SimplePostureWidget
-from FaceEmotion.face import SimpleFaceEmotionWidget  # Add this import for the face widget
+from FaceEmotion.face import SimpleFaceEmotionWidget
+from HandFidgeting.fidgeting import HandFidgetWidget  # Add import for the new fidget widget
 
 warnings.filterwarnings('ignore')
 
@@ -43,6 +44,8 @@ class MultimodalAnalysisApp:
         # Widget dimensions
         self.face_width = 500
         self.face_height = 200
+        self.fidget_width = 500
+        self.fidget_height = 200
         self.voice_width = 300
         self.voice_height = 200
         self.posture_width = 200
@@ -51,7 +54,8 @@ class MultimodalAnalysisApp:
         self.speech_height = 200
 
         # Combined widget width (for right side)
-        self.widget_container_width = max(self.voice_width + self.posture_width, self.speech_width, self.face_width)
+        self.widget_container_width = max(self.voice_width + self.posture_width, self.speech_width, self.face_width,
+                                          self.fidget_width)
 
         # Quit on 'q'
         self.root.bind('<KeyPress-q>', lambda e: self.on_close())
@@ -99,12 +103,13 @@ class MultimodalAnalysisApp:
         self.canvas = tk.Canvas(camera_frame, bg="#1e1e1e", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Configure the widget container grid - now with 3 rows
+        # Configure the widget container grid - now with 4 rows
         widget_container.grid_columnconfigure(0, weight=1)  # Posture column
         widget_container.grid_columnconfigure(1, weight=3)  # Voice column
         widget_container.grid_rowconfigure(0, weight=1)  # Top row - Face
-        widget_container.grid_rowconfigure(1, weight=1)  # Middle row - Posture & Voice
-        widget_container.grid_rowconfigure(2, weight=1)  # Bottom row - Speech
+        widget_container.grid_rowconfigure(1, weight=1)  # Second row - Fidget
+        widget_container.grid_rowconfigure(2, weight=1)  # Third row - Posture & Voice
+        widget_container.grid_rowconfigure(3, weight=1)  # Bottom row - Speech
 
         # Top row - Face widget (spans both columns)
         face_frame = tk.LabelFrame(
@@ -127,7 +132,28 @@ class MultimodalAnalysisApp:
         )
         self.face_widget.pack(fill=tk.BOTH, expand=True)
 
-        # Middle row - Posture widget (left)
+        # Second row - Hand Fidget widget (spans both columns)
+        fidget_frame = tk.LabelFrame(
+            widget_container,
+            text="Hand Fidget Detection",
+            bg=frame_color,
+            fg=text_color,
+            font=("Helvetica", 12, "bold"),
+            width=self.fidget_width,
+            height=self.fidget_height
+        )
+        fidget_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=2, pady=2)
+        fidget_frame.grid_propagate(False)  # Keep fixed size
+
+        # Hand Fidget widget
+        self.fidget_widget = HandFidgetWidget(
+            fidget_frame,
+            width=self.fidget_width,
+            height=self.fidget_height
+        )
+        self.fidget_widget.pack(fill=tk.BOTH, expand=True)
+
+        # Third row - Posture widget (left)
         posture_frame = tk.LabelFrame(
             widget_container,
             text="Posture Analysis",
@@ -137,7 +163,7 @@ class MultimodalAnalysisApp:
             width=self.posture_width,
             height=self.posture_height
         )
-        posture_frame.grid(row=1, column=0, sticky="nsew", padx=2, pady=2)
+        posture_frame.grid(row=2, column=0, sticky="nsew", padx=2, pady=2)
         posture_frame.grid_propagate(False)  # Keep fixed size
 
         # Posture widget - use the dimensions specified
@@ -148,7 +174,7 @@ class MultimodalAnalysisApp:
         )
         self.posture_widget.pack(fill=tk.BOTH, expand=True)
 
-        # Middle row - Voice widget (right)
+        # Third row - Voice widget (right)
         voice_frame = tk.LabelFrame(
             widget_container,
             text="Voice Emotion",
@@ -158,7 +184,7 @@ class MultimodalAnalysisApp:
             width=self.voice_width,
             height=self.voice_height
         )
-        voice_frame.grid(row=1, column=1, sticky="nsew", padx=2, pady=2)
+        voice_frame.grid(row=2, column=1, sticky="nsew", padx=2, pady=2)
         voice_frame.grid_propagate(False)  # Keep fixed size
 
         # Voice widget - use the dimensions specified
@@ -179,7 +205,7 @@ class MultimodalAnalysisApp:
             width=self.speech_width,
             height=self.speech_height
         )
-        speech_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=2, pady=2)
+        speech_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=2, pady=2)
         speech_frame.grid_propagate(False)  # Keep fixed size
 
         # Speech widget - use the dimensions specified
@@ -219,6 +245,11 @@ class MultimodalAnalysisApp:
         if hasattr(self.face_widget, 'is_active') and self.face_widget.is_active:
             # Process the frame but don't use the result for display
             self.face_widget.process_frame(frame.copy())
+
+        # Process frame for hand fidget detection if active
+        if hasattr(self.fidget_widget, 'is_active') and self.fidget_widget.is_active:
+            # Process the frame but don't use the result for display
+            self.fidget_widget.process_frame(frame.copy())
 
         # Process frame for posture detection if active
         if hasattr(self.posture_widget, 'is_active') and self.posture_widget.is_active:
@@ -262,6 +293,9 @@ class MultimodalAnalysisApp:
         # Stop each analysis module if active
         if hasattr(self.face_widget, 'is_active') and self.face_widget.is_active:
             self.face_widget.toggle_processing()
+
+        if hasattr(self.fidget_widget, 'is_active') and self.fidget_widget.is_active:
+            self.fidget_widget.toggle_processing()
 
         if hasattr(self.voice_widget, 'is_recording') and self.voice_widget.is_recording:
             self.voice_widget.toggle_recording()

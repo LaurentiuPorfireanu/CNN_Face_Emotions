@@ -190,12 +190,11 @@ class SimplePostureWidget(ttk.Frame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=0)  # Title area
         self.grid_rowconfigure(1, weight=1)  # Chart area - more weight
-        self.grid_rowconfigure(2, weight=0)  # Load button - minimal height
-        self.grid_rowconfigure(3, weight=0)  # Start button - minimal height
+        self.grid_rowconfigure(2, weight=0)  # Buttons row - minimal height
 
         # Title area for posture status
         title_frame = ttk.Frame(self)
-        title_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+        title_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(5, 0))  # Reduced bottom padding
 
         # Add title label to display posture status
         self.title_label = ttk.Label(
@@ -208,36 +207,40 @@ class SimplePostureWidget(ttk.Frame):
 
         # Chart area
         chart_frame = ttk.Frame(self)
-        chart_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        chart_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)  # Reduced padding
 
         # Create the chart
         self.create_chart_frame(chart_frame)
 
+        # Combined button frame for both buttons
+        button_frame = ttk.Frame(self)
+        button_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 2))  # Reduced top padding
+
+        # Configure button frame columns
+        button_frame.columnconfigure(0, weight=1)  # Load button
+        button_frame.columnconfigure(1, weight=1)  # Start button
+        button_frame.columnconfigure(2, weight=0)  # Status light
+
         # Load button
         self.load_button = ttk.Button(
-            self,
+            button_frame,
             text="Load Model",
             command=self.toggle_model
         )
-        self.load_button.grid(row=2, column=0, sticky="ew", padx=5, pady=(2, 0))  # Reduced bottom padding
+        self.load_button.grid(row=0, column=0, sticky="ew", padx=(0, 2))
 
-        # Start button row with status light
-        start_frame = ttk.Frame(self)
-        start_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=(0, 2))  # Reduced top padding
-
-        start_frame.columnconfigure(0, weight=1)  # Button takes most space
-        start_frame.columnconfigure(1, weight=0)  # Light takes minimal space
-
+        # Start button
         self.start_button = ttk.Button(
-            start_frame,
+            button_frame,
             text="Start",
             command=self.toggle_processing,
             state="disabled"
         )
-        self.start_button.grid(row=0, column=0, sticky="ew")
+        self.start_button.grid(row=0, column=1, sticky="ew", padx=(2, 2))
 
-        self.status_light = StatusLight(start_frame, size=15)
-        self.status_light.grid(row=0, column=1, padx=5, pady=0, sticky="e")
+        # Status light
+        self.status_light = StatusLight(button_frame, size=15)
+        self.status_light.grid(row=0, column=2, padx=(2, 0), pady=0, sticky="e")
         self.status_light.set_state("off")
 
     def create_chart_frame(self, parent):
@@ -250,18 +253,14 @@ class SimplePostureWidget(ttk.Frame):
         bg_color = '#2b2b2b' if is_dark_theme else 'white'
         text_color = 'white' if is_dark_theme else 'black'
 
-        # Create matplotlib figure with larger height (70% of widget height)
-        self.fig = Figure(figsize=(self.width / 100, (self.height * 0.7) / 100), dpi=100)
+        # Create matplotlib figure with larger height (85% of widget height instead of 70%)
+        self.fig = Figure(figsize=(self.width / 100, (self.height * 0.85) / 100), dpi=100)
         self.fig.patch.set_facecolor(bg_color)
 
         # Add proper padding to prevent cutting off elements
-        self.fig.subplots_adjust(left=0.15, right=0.85, top=0.85, bottom=0.15)
+        self.fig.subplots_adjust(left=0.15, right=0.85, top=0.9, bottom=0.1)  # Reduced bottom padding
 
         self.ax = self.fig.add_subplot(111)
-
-        # Remove title from plot since we'll use the title_label instead
-        # self.ax.set_title("Head Tilt Level", color=text_color, fontsize=10)
-
         self.ax.set_ylim(0, 1)
         self.ax.set_xlim(-0.5, 0.5)
         self.ax.set_xticks([])  # No x-axis ticks for a single bar
@@ -272,12 +271,6 @@ class SimplePostureWidget(ttk.Frame):
         # Add threshold lines for reference
         self.ax.axhline(y=0.4, color='orange', linestyle='--', alpha=0.7)
         self.ax.axhline(y=0.7, color='red', linestyle='--', alpha=0.7)
-
-        # We'll remove the text annotation from the plot
-        # and display it in the title_label instead
-        # self.text_annotation = self.ax.text(0, 0.9, "No Data",
-        #                                    ha='center', color=text_color,
-        #                                    fontsize=9)
 
         # Setup canvas appearance
         self.ax.set_facecolor(bg_color)
@@ -292,6 +285,7 @@ class SimplePostureWidget(ttk.Frame):
         canvas_widget = self.canvas.get_tk_widget()
         canvas_widget.grid(row=0, column=0, sticky="nsew")
 
+    # Other methods remain the same...
     def is_dark_theme(self):
         """Detect if dark theme is being used"""
         try:
