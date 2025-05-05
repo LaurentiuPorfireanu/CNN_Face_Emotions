@@ -63,10 +63,10 @@ model_coarse = EmotionCNN(num_classes=len(COARSE_EMOTIONS)).to(device)
 model_fine   = EmotionCNN(num_classes=len(FINE_EMOTIONS)).to(device)
 
 model_coarse.load_state_dict(
-    torch.load(os.path.join(ROOT, 'coarse_model.pth'), map_location=device)
+    torch.load(os.path.join(ROOT, 'FaceModel/coarse_model.pth'), map_location=device)
 )
 model_fine.load_state_dict(
-    torch.load(os.path.join(ROOT, 'fine_model.pth'), map_location=device)
+    torch.load(os.path.join(ROOT, 'FaceModel/fine_model.pth'), map_location=device)
 )
 
 model_coarse.eval()
