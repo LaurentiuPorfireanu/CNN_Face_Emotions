@@ -11,25 +11,28 @@ import torch
 import torch.nn.functional as F
 from torchvision import transforms
 
-#	─── Găsește recursiv un fișier sub root ───────────────────────────────────────────
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+# ─── Găsește recursiv un fișier sub root ───────────────────────────────────────────
 def find_file(root: str, filename: str) -> str:
-	for dirpath, dirnames, filenames in os.walk(root):
-		if filename in filenames:
-			return os.path.join(dirpath, filename)
-	raise FileNotFoundError(f"Nu am găsit {filename} sub {root}")
+    for dirpath, dirnames, filenames in os.walk(root):
+        if filename in filenames:
+            return os.path.join(dirpath, filename)
+    raise FileNotFoundError(f"Nu am găsit {filename} sub {root}")
 
-#	─── Încarcă un modul Python dintr-un fișier ───────────────────────────────────────
+# ─── Încarcă un modul Python dintr-un fișier ───────────────────────────────────────
 def load_module_from_path(name: str, path: str):
-	spec   = importlib.util.spec_from_file_location(name, path)
-	module = importlib.util.module_from_spec(spec)
-	spec.loader.exec_module(module)
-	return module
+    spec   = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
-#	─── Directorul de bază proiect ────────────────────────────────────────────────────
-THIS_DIR = os.path.dirname(os.path.abspath(__file__))   # .../Conferinta/Combine
-ROOT     = os.path.dirname(THIS_DIR)                    # .../Conferinta
+# ─── Directorul de bază proiect ────────────────────────────────────────────────────
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT     = os.path.dirname(THIS_DIR)
 
-#	─── Localizăm și încărcăm modulele ───────────────────────────────────────────────
+# ─── Localizăm și încărcăm modulele ───────────────────────────────────────────────
 RD_PATH = find_file(ROOT, 'realtimedetection.py')
 PP_PATH = find_file(ROOT, 'body_posture_detection.py')
 FD_PATH = find_file(ROOT, 'main.py')
@@ -38,7 +41,7 @@ realtime_mod = load_module_from_path('emotions', RD_PATH)
 posture_mod  = load_module_from_path('posture',  PP_PATH)
 fidget_mod   = load_module_from_path('fidget',   FD_PATH)
 
-#	─── Inițializăm modelele de emoții ────────────────────────────────────────────────
+# ─── Inițializăm modelele de emoții ────────────────────────────────────────────────
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 EmotionCNN      = realtime_mod.EmotionCNN
 COARSE_EMOTIONS = realtime_mod.COARSE_EMOTIONS
@@ -48,282 +51,280 @@ IMAGE_SIZE      = realtime_mod.IMAGE_SIZE
 model_coarse = EmotionCNN(num_classes=len(COARSE_EMOTIONS)).to(device)
 model_fine   = EmotionCNN(num_classes=len(FINE_EMOTIONS)).to(device)
 model_coarse.load_state_dict(torch.load(os.path.join(ROOT, 'coarse_model.pth'),
-									   map_location=device))
-model_fine  .load_state_dict(torch.load(os.path.join(ROOT, 'fine_model.pth'),
-									   map_location=device))
+                                       map_location=device))
+model_fine.load_state_dict(torch.load(os.path.join(ROOT, 'fine_model.pth'),
+                                      map_location=device))
 model_coarse.eval()
 model_fine.eval()
 
 face_cascade = cv2.CascadeClassifier(
-	cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 )
 emo_transform = transforms.Compose([
-	transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
-	transforms.ToTensor(),
-	transforms.Normalize(mean=[0.5], std=[0.5])
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5], std=[0.5])
 ])
 
-def detect_emotion(frame, threshold: float = 0.4) -> str:
-	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-	faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30,30))
-	if not len(faces):
-		return "none"
-	x, y, w, h = faces[0]
-	face = gray[y:y+h, x:x+w]
-	face = cv2.resize(face, (IMAGE_SIZE, IMAGE_SIZE))
-	face = Image.fromarray(face)
-	tensor = emo_transform(face).unsqueeze(0).to(device)
-	with torch.no_grad():
-		out_c   = model_coarse(tensor)
-		probs_c = F.softmax(out_c, dim=1)[0]
-		p_other = probs_c[COARSE_EMOTIONS.index('other')]
-		if p_other > threshold:
-			out_f = model_fine(tensor)
-			idx   = torch.argmax(out_f, dim=1).item()
-			return FINE_EMOTIONS[idx]
-		else:
-			idx = torch.argmax(probs_c[:3]).item()
-			return COARSE_EMOTIONS[idx]
+def detect_emotion_probs(frame, threshold: float = 0.4):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(
+        gray, scaleFactor=1.1, minNeighbors=5, minSize=(30,30)
+    )
+    probs = {e:0.0 for e in COARSE_EMOTIONS + FINE_EMOTIONS}
+    if len(faces) == 0:
+        return probs
 
-def overlay_emotion(frame, emotion):
-	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-	faces = face_cascade.detectMultiScale(gray, 1.1, 5, minSize=(30,30))
-	for (x, y, w, h) in faces:
-		cv2.rectangle(frame, (x, y), (x+w, y+h), (0,255,0), 4)
-		cv2.putText(frame, emotion, (x, y-10),
-					cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,255,0), 2)
-	return frame
+    x, y, w, h = faces[0]
+    face = gray[y:y+h, x:x+w]
+    face = cv2.resize(face, (IMAGE_SIZE, IMAGE_SIZE))
+    face = Image.fromarray(face)
+    tensor = emo_transform(face).unsqueeze(0).to(device)
 
-#	─── Setăm posture și fidgeting ───────────────────────────────────────────────────
+    with torch.no_grad():
+        out_c = model_coarse(tensor)
+        pc   = F.softmax(out_c, dim=1)[0].cpu().numpy()
+        for i, emo in enumerate(COARSE_EMOTIONS):
+            probs[emo] = float(pc[i])
+        if pc[COARSE_EMOTIONS.index('other')] > threshold:
+            out_f = model_fine(tensor)
+            pf    = F.softmax(out_f, dim=1)[0].cpu().numpy()
+            for i, emo in enumerate(FINE_EMOTIONS):
+                probs[emo] = float(pf[i])
+    return probs
+
+# ─── Setăm posture și fidgeting ───────────────────────────────────────────────────
 PostureDetector    = posture_mod.PostureDetector
 HandFidgetDetector = fidget_mod.HandFidgetDetector
 HandState          = fidget_mod.HandState
 
-#	─── Culori pentru beculețe ───────────────────────────────────────────────────────
-EMO_COLORS = {
-	"angry":    "red",
-	"disgust":  "purple",
-	"fear":     "orange",
-	"happy":    "yellow",
-	"neutral":  "white",
-	"sad":      "blue",
-	"surprise": "green"
+# culori pentru fiecare emoție
+EMO_BAR_COLORS = {
+    "happy":    "#FFD700",
+    "fear":     "#FF8C00",
+    "angry":    "#FF4500",
+    "neutral":  "#808080",
+    "disgust":  "#800080",
+    "sad":      "#1E90FF",
+    "surprise": "#32CD32",
 }
-POST_COLORS = {
-	"Severe":   "red",
-	"Moderate": "orange",
-	"Slight":   "yellow",
-	"Good":     "green"
-}
-FIDG_COLORS = {
-	"NORMAL":    "green",
-	"FIDGETING": "red",
-	"PINCHING":  "orange",
-	"TAPPING":   "purple"
-}
+# culori pentru postura
+POST_BAR_COLORS = ["#2E8B57", "#FFD700", "#FF8C00", "#FF4500"]  # Good→darkgreen,...Severe→orangered
 
-#	─── Aplicația Tkinter ────────────────────────────────────────────────────────────
 class App:
-	def __init__(self, root: tk.Tk):
-		self.root    = root
-		self.root.title("Live Monitor")
-		self.root.geometry("1000x600")
-		self.running = True
-		
-		# cameră
-		self.cap        = cv2.VideoCapture(0)
-		self.last_frame = None
-		
-		# frame counter & current emotion
-		self.frame_count     = 0
-		self.current_emotion = "none"
+    def __init__(self, root: tk.Tk):
+        self.root    = root
+        self.root.title("Live Monitor")
+        self.root.attributes("-fullscreen", True)
+        self.root.bind('<KeyPress-q>', lambda e: self.on_close())
+        self.running = True
 
-		# detectoare
-		self.posture = PostureDetector()
-		self.fidget  = HandFidgetDetector()
+        self.cap        = cv2.VideoCapture(0)
+        self.last_frame = None
 
-		# variabile UI
-		self.var_emo        = tk.BooleanVar()
-		self.var_post       = tk.BooleanVar()
-		self.var_fidget     = tk.BooleanVar()
-		self.var_vis_emo    = tk.BooleanVar()
-		self.var_vis_post   = tk.BooleanVar()
-		self.var_vis_fidget = tk.BooleanVar()
+        # etichete emoții fără 'other'
+        self.emo_labels = [e for e in COARSE_EMOTIONS + FINE_EMOTIONS if e != 'other']
 
-		self.emo_list  = list(EMO_COLORS.keys())
-		self.post_list = list(POST_COLORS.keys())
-		self.fidg_list = list(FIDG_COLORS.keys())
-		self.bulbs     = {}
+        # stări curente
+        self.emotion_probs = {e:0.0 for e in COARSE_EMOTIONS + FINE_EMOTIONS}
+        self.post_score    = 0.0
+        self.post_stat     = None
+        self.fidget_score  = {s:0.0 for s in ["NORMAL","TAPPING","PINCHING","FIDGETING"]}
 
-		self.build_ui()
-		self.root.after(10, self.video_loop)
-		threading.Thread(target=self.worker_loop, daemon=True).start()
-	def build_ui(self):
-		self.root.configure(bg="#2c2c2c")  # Dark mode
+        self.posture = PostureDetector()
+        self.fidget  = HandFidgetDetector()
 
-		frm = tk.Frame(self.root, bg="#2c2c2c")
-		frm.pack(fill=tk.BOTH, expand=True)
+        self.var_emo        = tk.BooleanVar(value=False)
+        self.var_vis_emo    = tk.BooleanVar(value=False)
+        self.var_post       = tk.BooleanVar(value=False)
+        self.var_vis_post   = tk.BooleanVar(value=False)
+        self.var_fidget     = tk.BooleanVar(value=False)
+        self.var_vis_fidget = tk.BooleanVar(value=False)
 
-		# ▶️ Video (stânga)
-		self.canvas = tk.Canvas(frm, width=640, height=480, bg="#1e1e1e", highlightthickness=0)
-		self.canvas.pack(side=tk.LEFT, padx=10, pady=10)
+        self.build_ui()
+        self.root.after(10, self.video_loop)
+        threading.Thread(target=self.worker_loop, daemon=True).start()
 
-		# ▶️ Controale + becuri (dreapta)
-		side = tk.Frame(frm, bg="#2c2c2c")
-		side.pack(side=tk.RIGHT, fill=tk.Y, padx=10)
+    def build_ui(self):
+        self.root.configure(bg="#2c2c2c")
+        frm = tk.Frame(self.root, bg="#2c2c2c")
+        frm.pack(fill=tk.BOTH, expand=True)
 
-		# Facem doua coloane
-		left_column = tk.Frame(side, bg="#2c2c2c")
-		left_column.grid(row=0, column=0, padx=20, pady=10, sticky="n")
+        # video (stânga)
+        self.canvas = tk.Canvas(frm, width=640, height=480,
+                                bg="#1e1e1e", highlightthickness=0)
+        self.canvas.pack(side=tk.LEFT, padx=10, pady=10)
 
-		right_column = tk.Frame(side, bg="#2c2c2c")
-		right_column.grid(row=0, column=1, padx=20, pady=10, sticky="n")
+        # panou lateral (dreapta)
+        side = tk.Frame(frm, bg="#2c2c2c")
+        side.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
 
-		# ▶️ Coloana stanga - Emoții
-		emo_frame = tk.LabelFrame(left_column, text="Emoții", font=("Helvetica", 13, "bold"), padx=10, pady=10, bg="#3a3a3a", fg="white")
-		emo_frame.pack(pady=10, fill="x")
-		tk.Checkbutton(emo_frame, text="Activează Emoții", variable=self.var_emo, bg="#3a3a3a", fg="white", selectcolor="#2c2c2c").pack(anchor="w", pady=5)
-		tk.Checkbutton(emo_frame, text="Vizualizare Emoții", variable=self.var_vis_emo, bg="#3a3a3a", fg="white", selectcolor="#2c2c2c").pack(anchor="w", pady=5)
-		for emo in self.emo_list:
-			self._add_bulb(emo_frame, emo)
+        # controale
+        ctrl = tk.LabelFrame(side, text="Controale",
+                             font=("Helvetica",13,"bold"),
+                             padx=10, pady=10,
+                             bg="#3a3a3a", fg="white")
+        ctrl.pack(fill=tk.X, pady=(0,10))
+        for text, var in [
+            ("Activează Emoții", self.var_emo),
+            ("Vizualizare Emoții", self.var_vis_emo),
+            ("Activează Postură", self.var_post),
+            ("Vizualizare Postură", self.var_vis_post),
+            ("Activează Fidgeting", self.var_fidget),
+            ("Vizualizare Fidgeting", self.var_vis_fidget),
+        ]:
+            tk.Checkbutton(ctrl, text=text,
+                           variable=var,
+                           bg="#3a3a3a", fg="white",
+                           selectcolor="#2c2c2c").pack(anchor="w")
 
-		# ▶️ Coloana dreapta - Postură
-		post_frame = tk.LabelFrame(right_column, text="Postură", font=("Helvetica", 13, "bold"), padx=10, pady=10, bg="#3a3a3a", fg="white")
-		post_frame.pack(pady=10, fill="x")
-		tk.Checkbutton(post_frame, text="Activează Postură", variable=self.var_post, bg="#3a3a3a", fg="white", selectcolor="#2c2c2c").pack(anchor="w", pady=5)
-		tk.Checkbutton(post_frame, text="Vizualizare Postură", variable=self.var_vis_post, bg="#3a3a3a", fg="white", selectcolor="#2c2c2c").pack(anchor="w", pady=5)
-		for p in self.post_list:
-			self._add_bulb(post_frame, p)
+        charts = tk.Frame(side, bg="#2c2c2c")
+        charts.pack(fill=tk.BOTH, expand=True)
 
-		# ▶️ Coloana dreapta - Fidgeting
-		fidg_frame = tk.LabelFrame(right_column, text="Fidgeting", font=("Helvetica", 13, "bold"), padx=10, pady=10, bg="#3a3a3a", fg="white")
-		fidg_frame.pack(pady=10, fill="x")
-		tk.Checkbutton(fidg_frame, text="Activează Fidgeting", variable=self.var_fidget, bg="#3a3a3a", fg="white", selectcolor="#2c2c2c").pack(anchor="w", pady=5)
-		tk.Checkbutton(fidg_frame, text="Vizualizare Fidgeting", variable=self.var_vis_fidget, bg="#3a3a3a", fg="white", selectcolor="#2c2c2c").pack(anchor="w", pady=5)
-		for f in self.fidg_list:
-			self._add_bulb(fidg_frame, f)
+        # Emoții
+        self.fig_emo, self.ax_emo = plt.subplots()
+        self.fig_emo.set_size_inches(3,2)
+        self.bars_emo = self.ax_emo.bar(
+            self.emo_labels,
+            [0]*len(self.emo_labels),
+            color=[EMO_BAR_COLORS[e] for e in self.emo_labels]
+        )
+        self.ax_emo.set_ylim(0,1)
+        self.ax_emo.set_xticks(range(len(self.emo_labels)))
+        self.ax_emo.set_xticklabels(self.emo_labels,
+                                    rotation=45, ha='right', fontsize=6)
+        self.ax_emo.set_title("Emoții", fontsize=8)
+        self.fig_emo.tight_layout()
+        canvas_emo = FigureCanvasTkAgg(self.fig_emo, master=charts)
+        canvas_emo.get_tk_widget().pack(fill=tk.X, pady=5)
+        self.canvas_emo = canvas_emo
 
+        # Fidgeting
+        self.fig_fidg, self.ax_fidg = plt.subplots()
+        self.fig_fidg.set_size_inches(3,2)
+        labels_fidg = ["NORMAL","TAPPING","PINCHING","FIDGETING"]
+        self.bars_fidg = self.ax_fidg.bar(labels_fidg, [0]*4, color='lightgreen')
+        self.ax_fidg.set_ylim(0,1)
+        self.ax_fidg.set_title("Fidgeting", fontsize=8)
+        self.fig_fidg.tight_layout()
+        canvas_fidg = FigureCanvasTkAgg(self.fig_fidg, master=charts)
+        canvas_fidg.get_tk_widget().pack(fill=tk.X, pady=5)
+        self.canvas_fidg = canvas_fidg
 
-	def _add_bulb(self, parent, label):
-		fr = tk.Frame(parent)
-		fr.pack(anchor="w", pady=2)
-		tk.Label(fr, text=label, width=10).pack(side=tk.LEFT)
-		l = tk.Label(fr, text="●", font=("Arial",16), fg="grey")
-		l.pack(side=tk.LEFT)
-		self.bulbs[label] = l
+        # Postură
+        self.fig_post, self.ax_post = plt.subplots()
+        self.fig_post.set_size_inches(6,2)
+        labels_post = ["Good","Slight","Moderate","Severe"]
+        self.bars_post = self.ax_post.bar(labels_post, [0]*4, color=POST_BAR_COLORS)
+        self.ax_post.set_ylim(0,1)
+        self.ax_post.set_title("Postură", fontsize=8)
+        self.fig_post.tight_layout()
+        canvas_post = FigureCanvasTkAgg(self.fig_post, master=charts)
+        canvas_post.get_tk_widget().pack(fill=tk.X, pady=5)
+        self.canvas_post = canvas_post
 
-	def set_bulb(self, label, color=None):
-		col = color if color else "grey"
-		if label in self.bulbs:
-			self.bulbs[label].config(fg=col)
+    def video_loop(self):
+        if not self.running:
+            return
+        ret, frame = self.cap.read()
+        if not ret:
+            self.cap.release()
+            time.sleep(0.5)
+            self.cap = cv2.VideoCapture(0)
+            self.root.after(10, self.video_loop)
+            return
 
-	def video_loop(self):
-		if not self.running:
-			return
+        frame = cv2.flip(frame, 1)
+        self.last_frame = frame.copy()
 
-		ret, frame = self.cap.read()
-		if not ret:
-			# Nu am putut citi frame-ul: eliberăm și reconectăm camera după o pauză
-			self.cap.release()
+        vis = frame.copy()
+        if self.var_vis_emo.get():
+            emo = max(self.emotion_probs.items(), key=lambda x: x[1])[0]
+            gray = cv2.cvtColor(vis, cv2.COLOR_BGR2GRAY)
+            for (x,y,w,h) in face_cascade.detectMultiScale(
+                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(30,30)):
+                cv2.rectangle(vis,(x,y),(x+w,y+h),(0,255,0),2)
+                cv2.putText(vis, emo, (x,y-10),
+                            cv2.FONT_HERSHEY_SIMPLEX,0.8,(0,255,0),2)
+        if self.var_vis_post.get():
+            vis, _ = self.posture.process_frame(vis)
+        if self.var_vis_fidget.get():
+            vis = self.fidget.process_frame(vis)
 
-			time.sleep(0.5)
-			self.cap = cv2.VideoCapture(0)
-			self.root.after(10, self.video_loop)
-			return
+        img = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(img)
+        ph  = ImageTk.PhotoImage(img)
+        self.canvas.create_image(0,0,anchor=tk.NW,image=ph)
+        self.canvas.image = ph
 
-		# Flip și păstrăm ultimul frame
-		frame = cv2.flip(frame, 1)
-		self.last_frame = frame.copy()
+        self.root.after(30, self.video_loop)
 
-		# actualizăm emoția o dată la 15 cadre
-		self.frame_count = (self.frame_count + 1) % 15
-		if self.frame_count == 0 and self.var_emo.get():
-			self.current_emotion = detect_emotion(frame)
+    def worker_loop(self):
+        while self.running:
+            frame = self.last_frame
+            if frame is not None:
+                # emoții
+                if self.var_emo.get():
+                    self.emotion_probs = detect_emotion_probs(frame)
+                else:
+                    for k in self.emotion_probs:
+                        self.emotion_probs[k] = 0.0
 
-		# Aplicăm suprapuneri vizuale
-		vis = frame.copy()
-		if self.var_vis_emo.get():
-			vis = overlay_emotion(vis, self.current_emotion)
-		if self.var_vis_post.get():
-			vis, _ = self.posture.process_frame(vis)
-		if self.var_vis_fidget.get():
-			vis = self.fidget.process_frame(vis)
+                # postură
+                if self.var_post.get():
+                    _, kp = self.posture.process_frame(frame)
+                    stat = self.posture.detect_slouching(kp).split()[0]
+                    self.post_stat  = stat
+                    score_map    = {"Good":0.0,"Slight":0.33,"Moderate":0.66,"Severe":1.0}
+                    self.post_score = score_map.get(stat, 0.0)
+                else:
+                    self.post_score = 0.0
+                    self.post_stat  = None
 
-		# Convertim pentru Tkinter și afișăm
-		img = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
-		img = Image.fromarray(img)
-		ph  = ImageTk.PhotoImage(img)
-		self.canvas.create_image(0, 0, anchor=tk.NW, image=ph)
-		self.canvas.image = ph
+                # fidgeting
+                if self.var_fidget.get():
+                    self.fidget.process_frame(frame)
+                    state = "NORMAL"
+                    for hand in ["Left","Right"]:
+                        st = self.fidget.hands_data[hand]['state'].name
+                        if st=="FIDGETING":
+                            state="FIDGETING"; break
+                        if st=="PINCHING":
+                            state="PINCHING"
+                        if st=="TAPPING" and state=="NORMAL":
+                            state="TAPPING"
+                    for s in self.fidget_score:
+                        self.fidget_score[s] = 1.0 if s==state else 0.0
+                else:
+                    for s in self.fidget_score:
+                        self.fidget_score[s] = 0.0
 
-		# Programăm următoarea apelare
-		self.root.after(10, self.video_loop)
+                # update emoții
+                for bar, emo in zip(self.bars_emo, self.emo_labels):
+                    bar.set_height(self.emotion_probs[emo])
+                self.canvas_emo.draw()
 
-	def worker_loop(self):
-		while self.running:
-			frm = self.last_frame
+                # update fidgeting
+                labels_fidg = ["NORMAL","TAPPING","PINCHING","FIDGETING"]
+                for bar, lbl in zip(self.bars_fidg, labels_fidg):
+                    bar.set_height(self.fidget_score[lbl])
+                self.canvas_fidg.draw()
 
-			# ▶ Emoții → beculețe (folosim current_emotion)
-			if self.var_emo.get() and frm is not None:
-				for e in self.emo_list:
-					self.set_bulb(e, None)
-				if self.current_emotion in EMO_COLORS:
-					self.set_bulb(self.current_emotion, EMO_COLORS[self.current_emotion])
-			else:
-				for e in self.emo_list:
-					self.set_bulb(e, None)
+                # update postură
+                labels_post = ["Good","Slight","Moderate","Severe"]
+                for bar, lbl in zip(self.bars_post, labels_post):
+                    bar.set_height(self.post_score if lbl==self.post_stat else 0.0)
+                self.canvas_post.draw()
 
-			# ▶ Postură → beculețe
-			if self.var_post.get() and frm is not None:
-				_, kp = self.posture.process_frame(frm)
-				stat = self.posture.detect_slouching(kp)
-				cat = None
-				if stat.startswith("Severe"):
-					cat = "Severe"
-				elif stat.startswith("Moderate"):
-					cat = "Moderate"
-				elif stat.startswith("Slight"):
-					cat = "Slight"
-				elif stat.startswith("Good"):
-					cat = "Good"
-				for p in self.post_list:
-					self.set_bulb(p, None)
-				if cat in POST_COLORS:
-					self.set_bulb(cat, POST_COLORS[cat])
-			else:
-				for p in self.post_list:
-					self.set_bulb(p, None)
+            time.sleep(0.2)
 
-			# ▶ Fidgeting → beculețe
-			if self.var_fidget.get() and frm is not None:
-				self.fidget.process_frame(frm)
-				state = "NORMAL"
-				for hand in ["Left","Right"]:
-					st = self.fidget.hands_data[hand]['state'].name
-					if st == "FIDGETING":
-						state = "FIDGETING"
-						break
-					if st == "PINCHING":
-						state = "PINCHING"
-					if st == "TAPPING" and state == "NORMAL":
-						state = "TAPPING"
-				for f in self.fidg_list:
-					self.set_bulb(f, None)
-				if state in FIDG_COLORS:
-					self.set_bulb(state, FIDG_COLORS[state])
-			else:
-				for f in self.fidg_list:
-					self.set_bulb(f, None)
+    def on_close(self):
+        self.running = False
+        self.cap.release()
+        self.root.destroy()
 
-			time.sleep(0.2)
-
-	def on_close(self):
-		self.running = False
-		self.cap.release()
-		self.root.destroy()
-
-if __name__ == "__main__":
-	root = tk.Tk()
-	app = App(root)
-	root.protocol("WM_DELETE_WINDOW", app.on_close)
-	root.mainloop()
+if __name__=="__main__":
+    root = tk.Tk()
+    app  = App(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    root.mainloop()
