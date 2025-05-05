@@ -245,7 +245,6 @@ class SimplePostureWidget(ttk.Frame):
 
     def create_chart_frame(self, parent):
         """Create the bar chart frame for tilt visualization"""
-        # Configure the parent frame to fill available space
         parent.columnconfigure(0, weight=1)
         parent.rowconfigure(0, weight=1)
 
@@ -253,17 +252,15 @@ class SimplePostureWidget(ttk.Frame):
         bg_color = '#2b2b2b' if is_dark_theme else 'white'
         text_color = 'white' if is_dark_theme else 'black'
 
-        # Create matplotlib figure with larger height (85% of widget height instead of 70%)
+        # Create matplotlib figure
         self.fig = Figure(figsize=(self.width / 100, (self.height * 0.85) / 100), dpi=100)
         self.fig.patch.set_facecolor(bg_color)
-
-        # Add proper padding to prevent cutting off elements
-        self.fig.subplots_adjust(left=0.15, right=0.85, top=0.9, bottom=0.1)  # Reduced bottom padding
+        self.fig.subplots_adjust(left=0.15, right=0.85, top=0.9, bottom=0.1)
 
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_ylim(0, 1)
-        self.ax.set_xlim(-0.5, 0.5)
-        self.ax.set_xticks([])  # No x-axis ticks for a single bar
+        self.ax.set_ylim(0, 1)  # Initial y-axis range
+        self.ax.set_xlim(-1, 1)  # Adjust x-axis to allow more space
+        self.ax.set_xticks([])
 
         # Initialize an empty bar
         self.bar = self.ax.bar([0], [0], width=0.5, color='green')[0]
@@ -285,7 +282,6 @@ class SimplePostureWidget(ttk.Frame):
         canvas_widget = self.canvas.get_tk_widget()
         canvas_widget.grid(row=0, column=0, sticky="nsew")
 
-    # Other methods remain the same...
     def is_dark_theme(self):
         """Detect if dark theme is being used"""
         try:
@@ -383,12 +379,12 @@ class SimplePostureWidget(ttk.Frame):
                 msg_type, msg_data = self.result_queue.get_nowait()
 
                 if msg_type == "model_loaded":
-                    self.load_button.config(text="Unload Model", state="normal")
+                    self.load_button.config(text="Unload", state="normal")
                     self.start_button.config(state="normal")
                     self.status_light.set_state("ready")
 
                 elif msg_type == "model_load_failed":
-                    self.load_button.config(text="Load Model", state="normal")
+                    self.load_button.config(text="Load", state="normal")
                     self.status_light.set_state("off")
                     self.update_chart("Error: Failed to load model", 0.0)
 
