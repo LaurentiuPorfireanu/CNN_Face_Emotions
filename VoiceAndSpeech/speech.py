@@ -9,6 +9,8 @@ import queue
 import warnings
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor, AutoTokenizer, AutoModelForSequenceClassification
 
+from Helpers.StatusLight import StatusLight
+
 warnings.filterwarnings('ignore')
 
 
@@ -20,26 +22,14 @@ class SpeechRecognitionModel:
         self.tokenizer_sentiment = None
         self.model_sentiment = None
         self.is_loaded = False
-        self.language = "romanian"  # Default language
-
-    def set_language(self, language):
-        """Set the language for the model"""
-        if not self.is_loaded:
-            self.language = language
-            return True
-        return False
 
     def load_model(self):
         try:
-            # Load speech-to-text model based on selected language
-            if self.language == "romanian":
-                self.processor = Wav2Vec2Processor.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
-                self.speech_model = Wav2Vec2ForCTC.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
-            else:  # English
-                self.processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
-                self.speech_model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+            # Load Romanian speech-to-text model
+            self.processor = Wav2Vec2Processor.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
+            self.speech_model = Wav2Vec2ForCTC.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
 
-            # Load sentiment analysis model (always English)
+            # Load sentiment analysis model
             self.tokenizer_sentiment = AutoTokenizer.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")
             self.model_sentiment = AutoModelForSequenceClassification.from_pretrained(
                 "cardiffnlp/twitter-roberta-base-sentiment")
@@ -87,36 +77,6 @@ class SpeechRecognitionModel:
         return "neutral", "", np.array([0.33, 0.34, 0.33])
 
 
-class StatusLight(ttk.Frame):
-    def __init__(self, parent, size=15, **kwargs):
-        ttk.Frame.__init__(self, parent, width=size, height=size, **kwargs)
-        self.size = size
-
-        self.canvas = tk.Canvas(self, width=size, height=size,
-                                highlightthickness=0, bg="#333333")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-        self.state = "off"
-        self.update_color()
-
-    def set_state(self, state):
-        """Set light state: 'off', 'loading', 'ready', 'active'"""
-        self.state = state
-        self.update_color()
-
-    def update_color(self):
-        color_map = {
-            "off": "#666666",
-            "loading": "#ff3333",
-            "ready": "#ffcc00",
-            "active": "#33cc33"
-        }
-        color = color_map.get(self.state, "#666666")
-
-        self.canvas.delete("all")
-        self.canvas.create_oval(2, 2, self.size - 2, self.size - 2,
-                                fill=color, outline="#444444", width=1)
-
-
 class SpeechRecognitionWidget(ttk.Frame):
     def __init__(self, parent, width=400, height=250, **kwargs):
         ttk.Frame.__init__(self, parent, **kwargs)
@@ -126,7 +86,6 @@ class SpeechRecognitionWidget(ttk.Frame):
         self.height = height
 
         self.model = SpeechRecognitionModel()
-        self.selected_language = tk.StringVar(value="romanian")  # Default selection
 
         self.sample_rate = 16000
         self.chunk_duration = 2.0  # 2 seconds per chunk like in original speech.py
@@ -146,17 +105,17 @@ class SpeechRecognitionWidget(ttk.Frame):
         self.grid_propagate(False)
         self.config(width=self.width, height=self.height)
 
-        self.grid_columnconfigure(0, weight=5)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=0)  # Title row
-        self.grid_rowconfigure(1, weight=0)  # Language selection row
-        self.grid_rowconfigure(2, weight=1)  # Text display row
-        self.grid_rowconfigure(3, weight=0)  # Controls row
+        self.grid_columnconfigure(0, weight=1)
+        # No column 1 since we're removing the sound bar
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=0)
 
-        # Title label
+        # Title frame
         title_frame = ttk.Frame(self)
         title_frame.grid(row=0, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
 
+        # Single title/sentiment label that will change based on state
         self.title_label = ttk.Label(
             title_frame,
             text="Speech Recognition (Romanian)",
@@ -164,41 +123,14 @@ class SpeechRecognitionWidget(ttk.Frame):
         )
         self.title_label.pack(pady=5)
 
-        # Language selection frame
-        lang_frame = ttk.Frame(self)
-        lang_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
-
-        ttk.Label(lang_frame, text="Select Language:").pack(side=tk.LEFT, padx=(0, 10))
-
-        # Romanian radio button
-        self.ro_radio = ttk.Radiobutton(
-            lang_frame,
-            text="Romanian",
-            variable=self.selected_language,
-            value="romanian",
-            command=self.on_language_change
-        )
-        self.ro_radio.pack(side=tk.LEFT, padx=5)
-
-        # English radio button
-        self.en_radio = ttk.Radiobutton(
-            lang_frame,
-            text="English",
-            variable=self.selected_language,
-            value="english",
-            command=self.on_language_change
-        )
-        self.en_radio.pack(side=tk.LEFT, padx=5)
-
         # Create text display area for transcription
         self.create_transcription_frame(self)
 
-        # Create sound level indicator
-        self.create_sound_bar_frame(self)
+        # Sound bar has been removed
 
         # Control panel at bottom
         control_frame = ttk.Frame(self)
-        control_frame.grid(row=3, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
+        control_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
 
         control_frame.grid_columnconfigure(0, weight=1)
         control_frame.grid_columnconfigure(1, weight=1)
@@ -225,28 +157,14 @@ class SpeechRecognitionWidget(ttk.Frame):
         self.status_light.grid(row=0, column=2, padx=5, pady=2, sticky="e")
         self.status_light.set_state("off")
 
-    def on_language_change(self):
-        """Handle language selection change"""
-        selected = self.selected_language.get()
-        # Only allow changing if model is not loaded
-        if self.model.is_loaded:
-            # Revert to previous selection if model is loaded
-            self.selected_language.set(self.model.language)
-            return
-
-        # Update title to reflect selected language
-        self.title_label.config(text=f"Speech Recognition ({selected.capitalize()})")
-        # Set language in model
-        self.model.set_language(selected)
-
     def create_transcription_frame(self, parent):
-        """Create frame with text display for speech transcription and sentiment"""
+        """Create frame with text display for speech transcription"""
         transcription_frame = ttk.Frame(
             parent,
-            width=int(self.width * 0.85),
+            width=self.width,  # Now uses full width since sound bar is removed
             height=int(self.height * 0.85)
         )
-        transcription_frame.grid(row=2, column=0, sticky="nsew", padx=2, pady=2)
+        transcription_frame.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=2, pady=2)
         transcription_frame.grid_propagate(False)
 
         transcription_frame.grid_columnconfigure(0, weight=1)
@@ -268,38 +186,10 @@ class SpeechRecognitionWidget(ttk.Frame):
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.text_display['yscrollcommand'] = scrollbar.set
 
-        # Frame for sentiment display
-        sentiment_frame = ttk.Frame(transcription_frame)
-        sentiment_frame.grid(row=1, column=0, columnspan=2, sticky="ew", pady=5)
-
-        # Label for sentiment
-        self.sentiment_label = ttk.Label(
-            sentiment_frame,
-            text="Sentiment: Neutral",
-            font=("Arial", 10, "bold")
-        )
-        self.sentiment_label.pack(side=tk.LEFT, padx=5)
-
     def create_sound_bar_frame(self, parent):
-        """Create a sound level indicator frame"""
-        sound_frame = ttk.Frame(
-            parent,
-            width=int(self.width * 0.15),
-            height=int(self.height * 0.85)
-        )
-        sound_frame.grid(row=2, column=1, sticky="nsew", padx=2, pady=2)
-        sound_frame.grid_propagate(False)
-
-        sound_frame.grid_columnconfigure(0, weight=1)
-        sound_frame.grid_rowconfigure(0, weight=1)
-
-        self.sound_bar = ttk.Progressbar(
-            sound_frame,
-            orient=tk.VERTICAL,
-            length=int(self.height * 0.6),
-            mode='determinate'
-        )
-        self.sound_bar.grid(row=0, column=0, padx=2, pady=2, sticky="ns")
+        """Create an empty frame (sound bar removed)"""
+        # This method is kept for compatibility but the sound bar is removed
+        pass
 
     def toggle_model(self):
         """Toggle model loading/unloading"""
@@ -310,10 +200,6 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.is_loading = True
             self.load_button.config(state="disabled")
             self.status_light.set_state("loading")
-
-            # Disable language selection during loading
-            self.ro_radio.config(state="disabled")
-            self.en_radio.config(state="disabled")
 
             def load_model_thread():
                 success = self.model.load_model()
@@ -330,15 +216,12 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.start_button.config(state="disabled")
             self.status_light.set_state("off")
 
-            # Re-enable language selection when model is unloaded
-            self.ro_radio.config(state="normal")
-            self.en_radio.config(state="normal")
-
             # Clear display
             self.text_display.config(state="normal")
             self.text_display.delete(1.0, tk.END)
             self.text_display.config(state="disabled")
-            self.sentiment_label.config(text="Sentiment: Neutral")
+            # Reset title to original text
+            self.title_label.config(text="Speech Recognition (Romanian)")
 
     def toggle_recording(self):
         """Toggle recording state"""
@@ -349,6 +232,9 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.is_recording = True
             self.start_button.config(text="Stop")
             self.status_light.set_state("active")
+
+            # Change title to show we're ready for sentiment
+            self.title_label.config(text="😐 Neutral")
 
             self.stream = sd.InputStream(
                 callback=self.audio_callback,
@@ -363,11 +249,12 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.start_button.config(text="Start")
             self.status_light.set_state("ready")
 
+            # Restore original title
+            self.title_label.config(text="Speech Recognition (Romanian)")
+
             if hasattr(self, 'stream'):
                 self.stream.stop()
                 self.stream.close()
-
-            self.sound_bar['value'] = 0
 
     def audio_callback(self, indata, frames, time_info, status):
         """Callback for processing audio data"""
@@ -377,8 +264,7 @@ class SpeechRecognitionWidget(ttk.Frame):
         if self.is_recording:
             self.audio_buffer = indata[:, 0].copy()
 
-            rms = np.sqrt(np.mean(np.square(self.audio_buffer))) * 300
-            self.result_queue.put(("audio_level", rms))
+            # Removed sound level processing since we removed the bar
 
             current_time = time.time()
             if current_time - self.last_update_time > 0.2:
@@ -411,13 +297,10 @@ class SpeechRecognitionWidget(ttk.Frame):
                 elif msg_type == "model_load_failed":
                     self.load_button.config(text="Load Model", state="normal")
                     self.status_light.set_state("off")
-                    # Re-enable language selection after failed load
-                    self.ro_radio.config(state="normal")
-                    self.en_radio.config(state="normal")
 
                 elif msg_type == "audio_level":
-                    level = min(100, max(0, msg_data))
-                    self.sound_bar['value'] = level
+                    # We've removed the sound bar, so we don't need to process this anymore
+                    pass
 
                 elif msg_type == "speech_result":
                     sentiment, transcription, sentiment_scores = msg_data
@@ -432,14 +315,15 @@ class SpeechRecognitionWidget(ttk.Frame):
         """Update the text display with new transcription and sentiment"""
         # Format sentiment text based on the sentiment value
         if sentiment == "positive":
-            sentiment_text = "Sentiment: 😊 Positive"
+            sentiment_text = "😊 Positive"
         elif sentiment == "negative":
-            sentiment_text = "Sentiment: 😞 Negative"
+            sentiment_text = "😞 Negative"
         else:
-            sentiment_text = "Sentiment: 😐 Neutral"
+            sentiment_text = "😐 Neutral"
 
-        # Update sentiment label
-        self.sentiment_label.config(text=sentiment_text)
+        # Update title with sentiment
+        if self.is_recording:
+            self.title_label.config(text=sentiment_text)
 
         # Update transcription text
         self.text_display.config(state="normal")
@@ -451,9 +335,9 @@ class SpeechRecognitionWidget(ttk.Frame):
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Speech Recognition")
-    root.geometry("400x350")  # Slightly taller to accommodate language selection
+    root.geometry("500x200")
 
-    speech_recognition_widget = SpeechRecognitionWidget(root, width=400, height=350)
+    speech_recognition_widget = SpeechRecognitionWidget(root, width=500, height=200)
     speech_recognition_widget.pack(fill=tk.BOTH, expand=True)
 
     root.mainloop()
