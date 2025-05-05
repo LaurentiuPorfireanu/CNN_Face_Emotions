@@ -174,6 +174,9 @@ class SimplePostureWidget(ttk.Frame):
         self.current_posture = "Unknown"
         self.current_tilt_value = 0.0
 
+        # Title label to display posture status
+        self.title_label = None
+
         self.result_queue = queue.Queue()
 
         self.create_ui()
@@ -185,13 +188,27 @@ class SimplePostureWidget(ttk.Frame):
 
         # Configure grid - give more space to chart area
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)  # Chart area - more weight
-        self.grid_rowconfigure(1, weight=0)  # Load button - minimal height
-        self.grid_rowconfigure(2, weight=0)  # Start button - minimal height
+        self.grid_rowconfigure(0, weight=0)  # Title area
+        self.grid_rowconfigure(1, weight=1)  # Chart area - more weight
+        self.grid_rowconfigure(2, weight=0)  # Load button - minimal height
+        self.grid_rowconfigure(3, weight=0)  # Start button - minimal height
+
+        # Title area for posture status
+        title_frame = ttk.Frame(self)
+        title_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+
+        # Add title label to display posture status
+        self.title_label = ttk.Label(
+            title_frame,
+            text="Head Tilt Level",
+            font=("Arial", 12, "bold"),
+            anchor="center"
+        )
+        self.title_label.pack(fill="x")
 
         # Chart area
         chart_frame = ttk.Frame(self)
-        chart_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        chart_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
         # Create the chart
         self.create_chart_frame(chart_frame)
@@ -202,11 +219,11 @@ class SimplePostureWidget(ttk.Frame):
             text="Load Model",
             command=self.toggle_model
         )
-        self.load_button.grid(row=1, column=0, sticky="ew", padx=5, pady=(2, 0))  # Reduced bottom padding
+        self.load_button.grid(row=2, column=0, sticky="ew", padx=5, pady=(2, 0))  # Reduced bottom padding
 
         # Start button row with status light
         start_frame = ttk.Frame(self)
-        start_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 2))  # Reduced top padding
+        start_frame.grid(row=3, column=0, sticky="ew", padx=5, pady=(0, 2))  # Reduced top padding
 
         start_frame.columnconfigure(0, weight=1)  # Button takes most space
         start_frame.columnconfigure(1, weight=0)  # Light takes minimal space
@@ -241,7 +258,10 @@ class SimplePostureWidget(ttk.Frame):
         self.fig.subplots_adjust(left=0.15, right=0.85, top=0.85, bottom=0.15)
 
         self.ax = self.fig.add_subplot(111)
-        self.ax.set_title("Head Tilt Level", color=text_color, fontsize=10)
+
+        # Remove title from plot since we'll use the title_label instead
+        # self.ax.set_title("Head Tilt Level", color=text_color, fontsize=10)
+
         self.ax.set_ylim(0, 1)
         self.ax.set_xlim(-0.5, 0.5)
         self.ax.set_xticks([])  # No x-axis ticks for a single bar
@@ -253,10 +273,11 @@ class SimplePostureWidget(ttk.Frame):
         self.ax.axhline(y=0.4, color='orange', linestyle='--', alpha=0.7)
         self.ax.axhline(y=0.7, color='red', linestyle='--', alpha=0.7)
 
-        # Add text annotation for status
-        self.text_annotation = self.ax.text(0, 0.9, "No Data",
-                                            ha='center', color=text_color,
-                                            fontsize=9)
+        # We'll remove the text annotation from the plot
+        # and display it in the title_label instead
+        # self.text_annotation = self.ax.text(0, 0.9, "No Data",
+        #                                    ha='center', color=text_color,
+        #                                    fontsize=9)
 
         # Setup canvas appearance
         self.ax.set_facecolor(bg_color)
@@ -301,6 +322,10 @@ class SimplePostureWidget(ttk.Frame):
         if self.is_loading:
             return
 
+        # Add this check to prevent unloading while active
+        if self.model.is_loaded and self.is_active:
+            return  # Don't allow unloading when the widget is active
+
         if not self.model.is_loaded:
             self.is_loading = True
             self.load_button.config(state="disabled")
@@ -316,14 +341,14 @@ class SimplePostureWidget(ttk.Frame):
 
             threading.Thread(target=load_model_thread).start()
         else:
-            if self.is_active:
-                self.toggle_processing()  # Stop processing first
-
             self.model.is_loaded = False
             self.load_button.config(text="Load Model")
             self.start_button.config(state="disabled")
             self.status_light.set_state("off")
             self.clear_chart()
+
+            # Reset title label to default text
+            self.title_label.config(text="Head Tilt Level")
 
     def toggle_processing(self):
         """Toggle posture processing on/off"""
@@ -338,6 +363,10 @@ class SimplePostureWidget(ttk.Frame):
             self.is_active = False
             self.start_button.config(text="Start")
             self.status_light.set_state("ready")
+            self.clear_chart()
+
+            # Reset title label to default text when stopping
+            self.title_label.config(text="Head Tilt Level")
 
     def process_frame(self, frame):
         """Process a video frame (called from parent widget)"""
@@ -379,9 +408,9 @@ class SimplePostureWidget(ttk.Frame):
         self.after(50, self.check_results)
 
     def update_chart(self, status_text, tilt_value):
-        """Update the bar chart with new tilt value"""
-        is_dark = self.is_dark_theme()
-        text_color = 'white' if is_dark else 'black'
+        """Update the bar chart with new tilt value and update title text"""
+        # Update the title label with posture status
+        self.title_label.config(text=status_text)
 
         # Update the bar height
         self.bar.set_height(tilt_value)
@@ -396,10 +425,6 @@ class SimplePostureWidget(ttk.Frame):
 
         self.bar.set_color(bar_color)
 
-        # Update text annotation
-        self.text_annotation.set_text(status_text)
-        self.text_annotation.set_color(text_color)
-
         # Redraw the canvas
         self.canvas.draw()
 
@@ -407,7 +432,11 @@ class SimplePostureWidget(ttk.Frame):
         """Reset the chart to default state"""
         self.bar.set_height(0)
         self.bar.set_color('green')
-        self.text_annotation.set_text("No Data")
+
+        # Reset title label to default text
+        self.title_label.config(text="Head Tilt Level")
+
+        # Redraw the canvas
         self.canvas.draw()
 
 

@@ -356,6 +356,10 @@ class SimpleFaceEmotionWidget(ttk.Frame):
         if self.is_loading:
             return
 
+        # Add this check to prevent unloading while active
+        if self.model.is_loaded and self.is_active:
+            return  # Don't allow unloading when the widget is active
+
         if not self.model.is_loaded:
             self.is_loading = True
             self.load_button.config(state="disabled")
@@ -371,9 +375,6 @@ class SimpleFaceEmotionWidget(ttk.Frame):
 
             threading.Thread(target=load_model_thread).start()
         else:
-            if self.is_active:
-                self.toggle_processing()  # Stop processing first
-
             self.model.is_loaded = False
             self.load_button.config(text="Load Model")
             self.start_button.config(state="disabled")

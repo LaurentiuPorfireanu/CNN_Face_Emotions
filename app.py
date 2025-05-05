@@ -212,17 +212,18 @@ class MultimodalAnalysisApp:
         frame = cv2.flip(frame, 1)
         self.current_frame = frame.copy()
 
+        # We'll always use the original frame for display
+        display_frame = frame.copy()
+
         # Process frame for face emotion detection if active
         if hasattr(self.face_widget, 'is_active') and self.face_widget.is_active:
-            # Process the frame but don't replace the display frame yet
-            self.face_widget.process_frame(frame)
+            # Process the frame but don't use the result for display
+            self.face_widget.process_frame(frame.copy())
 
         # Process frame for posture detection if active
         if hasattr(self.posture_widget, 'is_active') and self.posture_widget.is_active:
-            self.processed_frame = self.posture_widget.process_frame(frame)
-            display_frame = self.processed_frame
-        else:
-            display_frame = frame
+            # Process the frame but don't use the result for display
+            self.posture_widget.process_frame(frame.copy())
 
         # Convert to RGB for display in Tkinter
         img = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
