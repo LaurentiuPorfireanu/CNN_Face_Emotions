@@ -33,7 +33,7 @@ class ExpFilter:
         return self.value
 
 
-# Main hand fidget voice_emotion_detector class
+# Main hand fidget detector class
 class HandFidgetDetector:
     def __init__(self):
         # Configuration parameters
@@ -343,7 +343,7 @@ class HandFidgetDetector:
                         cv2.line(frame, (int(pos[0]), int(pos[1])), (end_x, end_y), color, 2)
 
 
-# Main function to run the voice_emotion_detector
+# Main function to run the detector
 def run_detector():
     # Initialize video capture
     cap = cv2.VideoCapture(0)
@@ -351,7 +351,7 @@ def run_detector():
         print("Cannot open camera")
         return
 
-    # Initialize voice_emotion_detector
+    # Initialize detector
     detector = HandFidgetDetector()
     detector.setup_ui()
 
