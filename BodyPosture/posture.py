@@ -161,274 +161,227 @@ class PostureDetectorModel:
 
 
 class SimplePostureWidget(ttk.Frame):
-    def __init__(self, parent, width=300, height=200, **kwargs):
-        ttk.Frame.__init__(self, parent, **kwargs)
+	def __init__(self, parent, width=300, height=200, **kwargs):
+		ttk.Frame.__init__(self, parent, **kwargs)
 
-        self.parent = parent
-        self.width = width
-        self.height = height
+		self.parent = parent
+		self.width = width
+		self.height = height
 
-        self.model = PostureDetectorModel()
-        self.is_active = False
-        self.is_loading = False
-        self.current_posture = "Unknown"
-        self.current_tilt_value = 0.0
+		self.model = PostureDetectorModel()
+		self.is_active = False
+		self.is_loading = False
+		self.current_posture = "Unknown"
+		self.current_tilt_value = 0.0
 
-        # Title label to display posture status
-        self.title_label = None
+		self.title_label = None
+		self.result_queue = queue.Queue()
 
-        self.result_queue = queue.Queue()
+		self.create_ui()
+		self.check_results()
 
-        self.create_ui()
-        self.check_results()
+	def create_ui(self):
+		self.grid_propagate(False)
+		self.config(width=self.width, height=self.height)
 
-    def create_ui(self):
-        self.grid_propagate(False)
-        self.config(width=self.width, height=self.height)
+		self.grid_columnconfigure(0, weight=1)
+		self.grid_rowconfigure(0, weight=0)
+		self.grid_rowconfigure(1, weight=1)
+		self.grid_rowconfigure(2, weight=0)
 
-        # Configure grid - give more space to chart area
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=0)  # Title area
-        self.grid_rowconfigure(1, weight=1)  # Chart area - more weight
-        self.grid_rowconfigure(2, weight=0)  # Buttons row - minimal height
+		title_frame = ttk.Frame(self)
+		title_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(5, 0))
 
-        # Title area for posture status
-        title_frame = ttk.Frame(self)
-        title_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=(5, 0))  # Reduced bottom padding
+		self.title_label = ttk.Label(
+			title_frame,
+			text="Head Tilt Level",
+			font=("Arial", 12, "bold"),
+			anchor="center"
+		)
+		self.title_label.pack(fill="x")
 
-        # Add title label to display posture status
-        self.title_label = ttk.Label(
-            title_frame,
-            text="Head Tilt Level",
-            font=("Arial", 12, "bold"),
-            anchor="center"
-        )
-        self.title_label.pack(fill="x")
+		chart_frame = ttk.Frame(self)
+		chart_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)
 
-        # Chart area
-        chart_frame = ttk.Frame(self)
-        chart_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=2)  # Reduced padding
+		self.create_chart_frame(chart_frame)
 
-        # Create the chart
-        self.create_chart_frame(chart_frame)
+		button_frame = ttk.Frame(self)
+		button_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 2))
 
-        # Combined button frame for both buttons
-        button_frame = ttk.Frame(self)
-        button_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 2))  # Reduced top padding
+		button_frame.columnconfigure(0, weight=1)
+		button_frame.columnconfigure(1, weight=1)
+		button_frame.columnconfigure(2, weight=0)
 
-        # Configure button frame columns
-        button_frame.columnconfigure(0, weight=1)  # Load button
-        button_frame.columnconfigure(1, weight=1)  # Start button
-        button_frame.columnconfigure(2, weight=0)  # Status light
+		self.load_button = ttk.Button(
+			button_frame,
+			text="Load Model",
+			command=self.toggle_model
+		)
+		self.load_button.grid(row=0, column=0, sticky="ew", padx=(0, 2))
 
-        # Load button
-        self.load_button = ttk.Button(
-            button_frame,
-            text="Load Model",
-            command=self.toggle_model
-        )
-        self.load_button.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+		self.start_button = ttk.Button(
+			button_frame,
+			text="Start",
+			command=self.toggle_processing,
+			state="disabled"
+		)
+		self.start_button.grid(row=0, column=1, sticky="ew", padx=(2, 2))
 
-        # Start button
-        self.start_button = ttk.Button(
-            button_frame,
-            text="Start",
-            command=self.toggle_processing,
-            state="disabled"
-        )
-        self.start_button.grid(row=0, column=1, sticky="ew", padx=(2, 2))
+		self.status_light = StatusLight(button_frame, size=15)
+		self.status_light.grid(row=0, column=2, padx=(2, 0), pady=0, sticky="e")
+		self.status_light.set_state("off")
 
-        # Status light
-        self.status_light = StatusLight(button_frame, size=15)
-        self.status_light.grid(row=0, column=2, padx=(2, 0), pady=0, sticky="e")
-        self.status_light.set_state("off")
+	def create_chart_frame(self, parent):
+		parent.columnconfigure(0, weight=1)
+		parent.rowconfigure(0, weight=1)
 
-    def create_chart_frame(self, parent):
-        """Create the bar chart frame for tilt visualization"""
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
+		is_dark_theme = self.is_dark_theme()
+		bg_color = '#2b2b2b' if is_dark_theme else 'white'
+		text_color = 'white' if is_dark_theme else 'black'
 
-        is_dark_theme = self.is_dark_theme()
-        bg_color = '#2b2b2b' if is_dark_theme else 'white'
-        text_color = 'white' if is_dark_theme else 'black'
+		self.fig = Figure(figsize=(self.width / 100, (self.height * 0.85) / 100), dpi=100)
+		self.fig.patch.set_facecolor(bg_color)
+		self.fig.subplots_adjust(left=0.15, right=0.85, top=0.9, bottom=0.1)
 
-        # Create matplotlib figure
-        self.fig = Figure(figsize=(self.width / 100, (self.height * 0.85) / 100), dpi=100)
-        self.fig.patch.set_facecolor(bg_color)
-        self.fig.subplots_adjust(left=0.15, right=0.85, top=0.9, bottom=0.1)
+		self.ax = self.fig.add_subplot(111)
+		self.ax.set_ylim(0, 1)
+		self.ax.set_xlim(-1, 1)
+		self.ax.set_xticks([])
 
-        self.ax = self.fig.add_subplot(111)
-        self.ax.set_ylim(0, 1)  # Initial y-axis range
-        self.ax.set_xlim(-1, 1)  # Adjust x-axis to allow more space
-        self.ax.set_xticks([])
+		self.bar = self.ax.bar([0], [0], width=0.5, color='green')[0]
 
-        # Initialize an empty bar
-        self.bar = self.ax.bar([0], [0], width=0.5, color='green')[0]
+		
+		self.ax.set_facecolor(bg_color)
+		for spine in self.ax.spines.values():
+			spine.set_color(text_color)
+		self.ax.tick_params(axis='y', colors=text_color, labelsize=8)
 
-        # Add threshold lines for reference
-        self.ax.axhline(y=0.4, color='orange', linestyle='--', alpha=0.7)
-        self.ax.axhline(y=0.7, color='red', linestyle='--', alpha=0.7)
+		self.canvas = FigureCanvasTkAgg(self.fig, parent)
+		self.canvas.draw()
+		canvas_widget = self.canvas.get_tk_widget()
+		canvas_widget.grid(row=0, column=0, sticky="nsew")
 
-        # Setup canvas appearance
-        self.ax.set_facecolor(bg_color)
-        for spine in self.ax.spines.values():
-            spine.set_color(text_color)
+	def is_dark_theme(self):
+		try:
+			style = ttk.Style()
+			bg_color = style.lookup('TFrame', 'background')
+			if not bg_color:
+				tmp = ttk.Frame(self)
+				bg_color = tmp.winfo_rgb(tmp.cget('background'))
+				tmp.destroy()
+				brightness = (bg_color[0] + bg_color[1] + bg_color[2]) / (3 * 257)
+				return brightness < 128
+			else:
+				if isinstance(bg_color, str) and bg_color.startswith('#'):
+					bg_color = tuple(int(bg_color[i:i + 2], 16) for i in (1, 3, 5))
+				else:
+					tmp = ttk.Frame(self)
+					bg_color = tmp.winfo_rgb(bg_color)
+					tmp.destroy()
+			brightness = sum(bg_color) / (3 * 257)
+			return brightness < 128
+		except:
+			return False
 
-        self.ax.tick_params(axis='y', colors=text_color, labelsize=8)
+	def toggle_model(self):
+		if self.is_loading:
+			return
+		if self.model.is_loaded and self.is_active:
+			return
 
-        # Create canvas widget
-        self.canvas = FigureCanvasTkAgg(self.fig, parent)
-        self.canvas.draw()
-        canvas_widget = self.canvas.get_tk_widget()
-        canvas_widget.grid(row=0, column=0, sticky="nsew")
+		if not self.model.is_loaded:
+			self.is_loading = True
+			self.load_button.config(state="disabled")
+			self.status_light.set_state("loading")
 
-    def is_dark_theme(self):
-        """Detect if dark theme is being used"""
-        try:
-            style = ttk.Style()
-            bg_color = style.lookup('TFrame', 'background')
+			def load_model_thread():
+				success = self.model.load_model()
+				if success:
+					self.result_queue.put(("model_loaded", None))
+				else:
+					self.result_queue.put(("model_load_failed", None))
+				self.is_loading = False
 
-            if not bg_color:
-                tmp = ttk.Frame(self)
-                bg_color = tmp.winfo_rgb(tmp.cget('background'))
-                tmp.destroy()
-                brightness = (bg_color[0] + bg_color[1] + bg_color[2]) / (3 * 257)
-                return brightness < 128
-            else:
-                if isinstance(bg_color, str):
-                    if bg_color.startswith('#'):
-                        bg_color = tuple(int(bg_color[i:i + 2], 16) for i in (1, 3, 5))
-                    else:
-                        tmp = ttk.Frame(self)
-                        bg_color = tmp.winfo_rgb(bg_color)
-                        tmp.destroy()
-            brightness = sum(bg_color) / (3 * 257)
-            return brightness < 128
-        except:
-            return False
+			threading.Thread(target=load_model_thread).start()
+		else:
+			self.model.is_loaded = False
+			self.load_button.config(text="Load Model")
+			self.start_button.config(state="disabled")
+			self.status_light.set_state("off")
+			self.clear_chart()
+			self.title_label.config(text="Head Tilt Level")
 
-    def toggle_model(self):
-        """Toggle model loading/unloading"""
-        if self.is_loading:
-            return
+	def toggle_processing(self):
+		if not self.model.is_loaded or self.is_loading:
+			return
 
-        # Add this check to prevent unloading while active
-        if self.model.is_loaded and self.is_active:
-            return  # Don't allow unloading when the widget is active
+		if not self.is_active:
+			self.is_active = True
+			self.start_button.config(text="Stop")
+			self.status_light.set_state("active")
+		else:
+			self.is_active = False
+			self.start_button.config(text="Start")
+			self.status_light.set_state("ready")
+			self.clear_chart()
+			self.title_label.config(text="Head Tilt Level")
 
-        if not self.model.is_loaded:
-            self.is_loading = True
-            self.load_button.config(state="disabled")
-            self.status_light.set_state("loading")
+	def process_frame(self, frame):
+		if not self.is_active or not self.model.is_loaded:
+			return frame
 
-            def load_model_thread():
-                success = self.model.load_model()
-                if success:
-                    self.result_queue.put(("model_loaded", None))
-                else:
-                    self.result_queue.put(("model_load_failed", None))
-                self.is_loading = False
+		processed_frame, keypoints = self.model.process_frame(frame)
+		quality = self.model.analyze_quality(keypoints)
+		posture_status, tilt_value = self.model.detect_slouching(keypoints)
 
-            threading.Thread(target=load_model_thread).start()
-        else:
-            self.model.is_loaded = False
-            self.load_button.config(text="Load Model")
-            self.start_button.config(state="disabled")
-            self.status_light.set_state("off")
-            self.clear_chart()
+		self.result_queue.put(("posture_update", (posture_status, tilt_value)))
+		return processed_frame
 
-            # Reset title label to default text
-            self.title_label.config(text="Head Tilt Level")
+	def check_results(self):
+		try:
+			while True:
+				msg_type, msg_data = self.result_queue.get_nowait()
 
-    def toggle_processing(self):
-        """Toggle posture processing on/off"""
-        if not self.model.is_loaded or self.is_loading:
-            return
+				if msg_type == "model_loaded":
+					self.load_button.config(text="Unload", state="normal")
+					self.start_button.config(state="normal")
+					self.status_light.set_state("ready")
 
-        if not self.is_active:
-            self.is_active = True
-            self.start_button.config(text="Stop")
-            self.status_light.set_state("active")
-        else:
-            self.is_active = False
-            self.start_button.config(text="Start")
-            self.status_light.set_state("ready")
-            self.clear_chart()
+				elif msg_type == "model_load_failed":
+					self.load_button.config(text="Load", state="normal")
+					self.status_light.set_state("off")
+					self.update_chart("Error: Failed to load model", 0.0)
 
-            # Reset title label to default text when stopping
-            self.title_label.config(text="Head Tilt Level")
+				elif msg_type == "posture_update":
+					posture_status, tilt_value = msg_data
+					self.update_chart(posture_status, tilt_value)
 
-    def process_frame(self, frame):
-        """Process a video frame (called from parent widget)"""
-        if not self.is_active or not self.model.is_loaded:
-            return frame
+		except queue.Empty:
+			pass
 
-        processed_frame, keypoints = self.model.process_frame(frame)
-        quality = self.model.analyze_quality(keypoints)
-        posture_status, tilt_value = self.model.detect_slouching(keypoints)
+		self.after(50, self.check_results)
 
-        # Update the chart
-        self.result_queue.put(("posture_update", (posture_status, tilt_value)))
+	def update_chart(self, status_text, tilt_value):
+		self.title_label.config(text=status_text)
+		tilt_value = max(tilt_value, 0.05)
+		self.bar.set_height(tilt_value)
 
-        return processed_frame
+		status_to_color = {
+		    "Good posture": "green",
+		    "Slight forward head tilt": "yellow",
+		    "Moderate forward head tilt": "orange",
+		    "Severe forward head tilt": "red"
+	    }
+		bar_color = status_to_color.get(status_text.strip(), "green")
 
-    def check_results(self):
-        """Check and process results from the result queue"""
-        try:
-            while True:
-                msg_type, msg_data = self.result_queue.get_nowait()
+		self.bar.set_color(bar_color)
+		self.canvas.draw()
 
-                if msg_type == "model_loaded":
-                    self.load_button.config(text="Unload", state="normal")
-                    self.start_button.config(state="normal")
-                    self.status_light.set_state("ready")
-
-                elif msg_type == "model_load_failed":
-                    self.load_button.config(text="Load", state="normal")
-                    self.status_light.set_state("off")
-                    self.update_chart("Error: Failed to load model", 0.0)
-
-                elif msg_type == "posture_update":
-                    posture_status, tilt_value = msg_data
-                    self.update_chart(posture_status, tilt_value)
-
-        except queue.Empty:
-            pass
-
-        self.after(50, self.check_results)
-
-    def update_chart(self, status_text, tilt_value):
-        """Update the bar chart with new tilt value and update title text"""
-        # Update the title label with posture status
-        self.title_label.config(text=status_text)
-
-        # Update the bar height
-        self.bar.set_height(tilt_value)
-
-        # Update the bar color based on tilt value
-        if tilt_value > 0.7:
-            bar_color = 'red'
-        elif tilt_value > 0.4:
-            bar_color = 'orange'
-        else:
-            bar_color = 'green'
-
-        self.bar.set_color(bar_color)
-
-        # Redraw the canvas
-        self.canvas.draw()
-
-    def clear_chart(self):
-        """Reset the chart to default state"""
-        self.bar.set_height(0)
-        self.bar.set_color('green')
-
-        # Reset title label to default text
-        self.title_label.config(text="Head Tilt Level")
-
-        # Redraw the canvas
-        self.canvas.draw()
-
+	def clear_chart(self):
+		self.bar.set_height(0)
+		self.bar.set_color('green')
+		self.title_label.config(text="Head Tilt Level")
+		self.canvas.draw()
 
 if __name__ == "__main__":
     # Example usage in a parent window
