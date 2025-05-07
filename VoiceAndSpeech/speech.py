@@ -30,10 +30,7 @@ class SpeechRecognitionModel:
 
             # Unload current models if any are loaded
             if self.is_loaded:
-                self.speech_model = None
-                self.processor = None
-                self.tokenizer_sentiment = None
-                self.model_sentiment = None
+                self.unload_model()
 
             # Load speech-to-text model based on selected language
             if language == "ro":
@@ -54,6 +51,39 @@ class SpeechRecognitionModel:
             return True
         except Exception as e:
             print(f"Error loading model: {e}")
+            return False
+
+    def unload_model(self):
+        """Properly unload the model and clean up resources"""
+        try:
+            # Explicitly delete model objects to free up CUDA memory
+            if self.speech_model is not None:
+                del self.speech_model
+                self.speech_model = None
+
+            if self.processor is not None:
+                del self.processor
+                self.processor = None
+
+            if self.model_sentiment is not None:
+                del self.model_sentiment
+                self.model_sentiment = None
+
+            if self.tokenizer_sentiment is not None:
+                del self.tokenizer_sentiment
+                self.tokenizer_sentiment = None
+
+            # Force garbage collection to release memory
+            import gc
+            gc.collect()
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            self.is_loaded = False
+            return True
+        except Exception as e:
+            print(f"Error unloading model: {e}")
             return False
 
     def process_audio(self, audio):
@@ -109,6 +139,7 @@ class SpeechRecognitionWidget(ttk.Frame):
 
         self.is_recording = False
         self.is_loading = False
+        self.is_unloading = False  # New flag to track unloading state
         self.audio_buffer = np.zeros(self.chunk_samples)
         self.last_update_time = time.time()
 
@@ -218,7 +249,7 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.title_label.config(text=base_title)
 
         # If model is loaded, reload with new language
-        if self.model.is_loaded and not self.is_loading and not self.is_recording:
+        if self.model.is_loaded and not self.is_loading and not self.is_recording and not self.is_unloading:
             self.toggle_model()  # Unload
             self.toggle_model()  # Load with new language
 
@@ -258,10 +289,11 @@ class SpeechRecognitionWidget(ttk.Frame):
 
     def toggle_model(self):
         """Toggle model loading/unloading"""
-        if self.is_loading or self.is_recording:
+        if self.is_loading or self.is_recording or self.is_unloading:
             return
 
         if not self.model.is_loaded:
+            # Handle loading the model
             self.is_loading = True
             self.load_button.config(state="disabled")
             self.status_light.set_state("loading")
@@ -279,32 +311,33 @@ class SpeechRecognitionWidget(ttk.Frame):
 
             threading.Thread(target=load_model_thread).start()
         else:
-            self.model.is_loaded = False
-            self.load_button.config(text="Load Model")
+            # Handle unloading the model
+            self.is_unloading = True
+            self.load_button.config(state="disabled")
             self.start_button.config(state="disabled")
-            self.status_light.set_state("off")
+            self.status_light.set_state("loading")  # Show loading state while unloading
 
-            # Clear display
-            self.text_display.config(state="normal")
-            self.text_display.delete(1.0, tk.END)
-            self.text_display.config(state="disabled")
+            def unload_model_thread():
+                success = self.model.unload_model()
+                if success:
+                    self.result_queue.put(("model_unloaded", None))
+                else:
+                    self.result_queue.put(("model_unload_failed", None))
+                self.is_unloading = False
 
-            # Reset title to original text based on the selected language
-            language = self.selected_language.get()
-            if language == "ro":
-                self.title_label.config(text="Speech Recognition (Romanian)")
-            else:
-                self.title_label.config(text="Speech Recognition (English)")
+            threading.Thread(target=unload_model_thread).start()
 
     def toggle_recording(self):
         """Toggle recording state"""
-        if not self.model.is_loaded or self.is_loading:
+        if not self.model.is_loaded or self.is_loading or self.is_unloading:
             return
 
         if not self.is_recording:
             self.is_recording = True
             self.start_button.config(text="Stop")
             self.status_light.set_state("active")
+            # Disable load/unload button during recording
+            self.load_button.config(state="disabled")
 
             # Change title to show we're ready for sentiment
             self.title_label.config(text="😐 Neutral")
@@ -321,6 +354,8 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.is_recording = False
             self.start_button.config(text="Start")
             self.status_light.set_state("ready")
+            # Re-enable load/unload button after recording stops
+            self.load_button.config(state="normal")
 
             # Restore original title based on the selected language
             language = self.selected_language.get()
@@ -374,6 +409,28 @@ class SpeechRecognitionWidget(ttk.Frame):
                 elif msg_type == "model_load_failed":
                     self.load_button.config(text="Load Model", state="normal")
                     self.status_light.set_state("off")
+
+                elif msg_type == "model_unloaded":
+                    self.load_button.config(text="Load Model", state="normal")
+                    self.start_button.config(state="disabled")
+                    self.status_light.set_state("off")
+
+                    # Clear display
+                    self.text_display.config(state="normal")
+                    self.text_display.delete(1.0, tk.END)
+                    self.text_display.config(state="disabled")
+
+                    # Reset title to original text based on the selected language
+                    language = self.selected_language.get()
+                    if language == "ro":
+                        self.title_label.config(text="Speech Recognition (Romanian)")
+                    else:
+                        self.title_label.config(text="Speech Recognition (English)")
+
+                elif msg_type == "model_unload_failed":
+                    # If unloading fails, return to previous state
+                    self.load_button.config(text="Unload Model", state="normal")
+                    self.status_light.set_state("ready")
 
                 elif msg_type == "audio_level":
                     # We've removed the sound bar, so we don't need to process this anymore
