@@ -22,14 +22,30 @@ class SpeechRecognitionModel:
         self.tokenizer_sentiment = None
         self.model_sentiment = None
         self.is_loaded = False
+        self.current_language = "en"  # Default to English
 
-    def load_model(self):
+    def load_model(self, language="en"):
         try:
-            # Load Romanian speech-to-text model
-            self.processor = Wav2Vec2Processor.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
-            self.speech_model = Wav2Vec2ForCTC.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
+            self.current_language = language
 
-            # Load sentiment analysis model
+            # Unload current models if any are loaded
+            if self.is_loaded:
+                self.speech_model = None
+                self.processor = None
+                self.tokenizer_sentiment = None
+                self.model_sentiment = None
+
+            # Load speech-to-text model based on selected language
+            if language == "ro":
+                # Load Romanian speech-to-text model
+                self.processor = Wav2Vec2Processor.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
+                self.speech_model = Wav2Vec2ForCTC.from_pretrained("anton-l/wav2vec2-large-xlsr-53-romanian")
+            else:
+                # Load English speech-to-text model
+                self.processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-base-960h")
+                self.speech_model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-base-960h")
+
+            # Load sentiment analysis model (same for both languages as it will be applied to transcribed text)
             self.tokenizer_sentiment = AutoTokenizer.from_pretrained("cardiffnlp/twitter-roberta-base-sentiment")
             self.model_sentiment = AutoModelForSequenceClassification.from_pretrained(
                 "cardiffnlp/twitter-roberta-base-sentiment")
@@ -88,13 +104,16 @@ class SpeechRecognitionWidget(ttk.Frame):
         self.model = SpeechRecognitionModel()
 
         self.sample_rate = 16000
-        self.chunk_duration = 2.0  # 2 seconds per chunk like in original speech.py
+        self.chunk_duration = 2.0
         self.chunk_samples = int(self.chunk_duration * self.sample_rate)
 
         self.is_recording = False
         self.is_loading = False
         self.audio_buffer = np.zeros(self.chunk_samples)
         self.last_update_time = time.time()
+
+        # Default language selection
+        self.selected_language = tk.StringVar(value="en")
 
         self.result_queue = queue.Queue()
 
@@ -118,7 +137,7 @@ class SpeechRecognitionWidget(ttk.Frame):
         # Single title/sentiment label that will change based on state
         self.title_label = ttk.Label(
             title_frame,
-            text="Speech Recognition (Romanian)",
+            text="Speech Recognition (English)",  # Default to English
             font=("Arial", 12, "bold")
         )
         self.title_label.pack(pady=5)
@@ -132,11 +151,12 @@ class SpeechRecognitionWidget(ttk.Frame):
         control_frame = ttk.Frame(self)
         control_frame.grid(row=2, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
 
-        # Updated grid configuration - all controls left-aligned
+        # Updated grid configuration
         control_frame.grid_columnconfigure(0, weight=0)  # Load button
         control_frame.grid_columnconfigure(1, weight=0)  # Start button
         control_frame.grid_columnconfigure(2, weight=0)  # Status light
-        control_frame.grid_columnconfigure(3, weight=1)  # Empty space
+        control_frame.grid_columnconfigure(3, weight=1)  # Empty space (for spacing)
+        control_frame.grid_columnconfigure(4, weight=0)  # Language selection (right-aligned)
 
         self.load_button = ttk.Button(
             control_frame,
@@ -158,6 +178,49 @@ class SpeechRecognitionWidget(ttk.Frame):
         self.status_light = StatusLight(control_frame, size=15)
         self.status_light.grid(row=0, column=2, padx=(2, 5), pady=2, sticky="w")
         self.status_light.set_state("off")
+
+        # Language selection radio buttons (right-aligned)
+        lang_frame = ttk.Frame(control_frame)
+        lang_frame.grid(row=0, column=4, padx=(0, 2), pady=2, sticky="e")
+
+        # Radio button for English
+        self.radio_en = ttk.Radiobutton(
+            lang_frame,
+            text="EN",
+            variable=self.selected_language,
+            value="en",
+            command=self.language_changed
+        )
+        self.radio_en.pack(side=tk.LEFT, padx=(0, 5))
+
+        # Radio button for Romanian
+        self.radio_ro = ttk.Radiobutton(
+            lang_frame,
+            text="RO",
+            variable=self.selected_language,
+            value="ro",
+            command=self.language_changed
+        )
+        self.radio_ro.pack(side=tk.LEFT)
+
+    def language_changed(self):
+        """Handle language change"""
+        new_language = self.selected_language.get()
+
+        # Update the title to reflect the selected language
+        if new_language == "ro":
+            base_title = "Speech Recognition (Romanian)"
+        else:
+            base_title = "Speech Recognition (English)"
+
+        # Only update title if not currently showing sentiment
+        if not self.is_recording:
+            self.title_label.config(text=base_title)
+
+        # If model is loaded, reload with new language
+        if self.model.is_loaded and not self.is_loading and not self.is_recording:
+            self.toggle_model()  # Unload
+            self.toggle_model()  # Load with new language
 
     def create_transcription_frame(self, parent):
         """Create frame with text display for speech transcription"""
@@ -203,8 +266,11 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.load_button.config(state="disabled")
             self.status_light.set_state("loading")
 
+            # Get currently selected language
+            current_language = self.selected_language.get()
+
             def load_model_thread():
-                success = self.model.load_model()
+                success = self.model.load_model(language=current_language)
                 if success:
                     self.result_queue.put(("model_loaded", None))
                 else:
@@ -222,8 +288,13 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.text_display.config(state="normal")
             self.text_display.delete(1.0, tk.END)
             self.text_display.config(state="disabled")
-            # Reset title to original text
-            self.title_label.config(text="Speech Recognition (Romanian)")
+
+            # Reset title to original text based on the selected language
+            language = self.selected_language.get()
+            if language == "ro":
+                self.title_label.config(text="Speech Recognition (Romanian)")
+            else:
+                self.title_label.config(text="Speech Recognition (English)")
 
     def toggle_recording(self):
         """Toggle recording state"""
@@ -251,8 +322,12 @@ class SpeechRecognitionWidget(ttk.Frame):
             self.start_button.config(text="Start")
             self.status_light.set_state("ready")
 
-            # Restore original title
-            self.title_label.config(text="Speech Recognition (Romanian)")
+            # Restore original title based on the selected language
+            language = self.selected_language.get()
+            if language == "ro":
+                self.title_label.config(text="Speech Recognition (Romanian)")
+            else:
+                self.title_label.config(text="Speech Recognition (English)")
 
             if hasattr(self, 'stream'):
                 self.stream.stop()
